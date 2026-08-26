@@ -1,0 +1,113 @@
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part four</p>
+<h2>Twenty conversations, rendered whole</h2>
+<p>Scores compress a conversation to one bit. These do not. Five multi-turn tasks were drawn at random — seeded, from a fixed shuffle across all four multi-turn categories: two from <code>base</code>, one each from <code>miss_func</code>, <code>miss_param</code> and <code>long_context</code>. Every task is then replayed for four models: the untrained <strong>Base</strong>, the official <strong>Instruct</strong> reference, and the best checkpoint from each SFT run — <strong>no-reason epoch 7</strong> and <strong>reasoning epoch 3</strong>.</p>
+<p>All four models saw the <em>identical</em> system prompt and the identical scripted user turns, so the tabs are directly comparable: switch between them and only the model's own behaviour changes. Each card opens with that shared system prompt and the starting API state, then the conversation — user turns, the assistant's reasoning trace where it emitted one, its tool calls, and the real values the API returned.</p>
+
+<div class="callout">
+<p><strong>None of the twenty passed.</strong> That is the expected shape of a random draw here, not a selection: at their measured pass rates a clean sweep of five failures is the most likely outcome for Instruct (about 15% likely) and near-certain for the two fine-tunes, which pass roughly 1 multi-turn task in 40. Nothing was filtered — the draw is what it is, and the failure banner on each tab names the exact scoring verdict.</p>
+</div>
+
+<h3 style="margin-top:1.9rem">How to read a card</h3>
+<div class="tblwrap">
+<table>
+<thead><tr><th>Element</th><th class="w">What it is</th></tr></thead>
+<tbody>
+<tr><td>System prompt</td><td class="w">The full <code># Tools</code> block BFCL builds — every function schema serialised flat, then the <code>&lt;tool_call&gt;</code> protocol instruction. 19–28 KB per task. Identical across all four tabs.</td></tr>
+<tr><td>Initial API state</td><td class="w">The world before turn 1: the filesystem tree, the account balances, the vehicle's fuel level. Ground truth is a state comparison against this object after the last turn.</td></tr>
+<tr><td>Turn <em>n</em> → step <em>k</em></td><td class="w">A turn is one scripted user message. Within it the model may take several steps, each a generation followed by the tool results it triggered. A turn ends when the model emits no call.</td></tr>
+<tr><td>reasoning trace</td><td class="w">Collapsed by default. Present for Instruct and for the reasoning-run checkpoint; the no-reason checkpoint emits none by construction.</td></tr>
+<tr><td>tool response</td><td class="w">What the API actually returned — including its error strings. These are the moments that decide the task, and the ones the fine-tunes ignore.</td></tr>
+<tr><td>handler_log</td><td class="w">The harness narrating itself. <code>Empty response from the model. Proceed to next turn.</code> means the model answered in prose instead of calling anything, and the turn was closed out.</td></tr>
+</tbody>
+</table>
+</div>
+
+<!--CARDS-->
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part five</p>
+<h2>What the transcripts show</h2>
+
+<div class="finds">
+
+<div class="find warn">
+  <span class="num">Reading 1 · open the Base tab first</span>
+  <h3>The untrained model is not answering — it is writing the rest of the conversation</h3>
+  <p>Base's transcripts are unmistakable. It produces a correct call object, then keeps going: it invents the user's next question, answers that too, invents another, and runs until the generator is cut off. The delimiters it emits between those imagined turns decode as the stray <code> fø</code> you can see in the text — a base model reaching for a chat token it was never trained to place.</p>
+  <p>The numbers behind that impression, across all 800 multi-turn tasks: <strong>85.3%</strong> of Base's generations run to the 1,000-token cap, against 0.6% for the no-reason checkpoint and 6.3% for Instruct. And <strong>0 of 3,336</strong> contain a <code>&lt;tool_call&gt;</code> tag — the single fact behind Base's 0.00 across four categories, and the reason its re-parsed score is 58.67% rather than zero.</p>
+  <p>Read the step counts too. Instruct takes 8,060 generations to work through the same 800 tasks; the no-reason checkpoint takes 5,334, and Base only 3,336. Fewer steps is not efficiency here — it is turns ending early because nothing callable came out.</p>
+</div>
+
+<div class="find">
+  <span class="num">Reading 2</span>
+  <h3>Prose is a hard stop, and both fine-tunes reach for it</h3>
+  <p>The harness ends a turn the moment a generation contains no parseable call. So an assistant message that says <em>"the file is not present in the current directory — verify its location"</em> is not a partial step towards the answer; it is the end of the turn, and the next user message arrives against unchanged state. Across the suite, 38–51% of fine-tune turns contain no tool call at all.</p>
+  <p>The pattern is visible in every card: a plausible opening batch of calls, a precise error from the API, and then an explanation addressed to the user rather than a correction addressed to the tool.</p>
+</div>
+
+<div class="find">
+  <span class="num">Reading 3</span>
+  <h3>The models do not recover from errors they can read</h3>
+  <p>On the 625 turns across the suite that hit a tool error, the fine-tunes issued any follow-up call only <strong>16–20%</strong> of the time. The errors are not cryptic — <code>{"error": "mv: cannot move 'final_report.pdf': No such file or directory"}</code> names the file and the reason. What is missing is the move that follows: <code>cd</code> into the directory that holds it. Across 200 filesystem tasks, <code>cd</code> was called 11 times.</p>
+</div>
+
+<div class="find">
+  <span class="num">Reading 4</span>
+  <h3>Reasoning traces make the failure longer, not different</h3>
+  <p>Open the same card on the <span style="color:var(--s2);font-weight:600">reasoning</span> tab and then the <span style="color:var(--s1);font-weight:600">no-reason</span> tab. The reasoning checkpoint deliberates at length, then emits the same call the other model emitted directly — or, more often, deliberates and emits nothing. The traces do not surface the missing <code>cd</code>; they narrate around the error and conclude with advice.</p>
+  <p>They do cost context. The reasoning checkpoint hit the served context window on <strong>26</strong> multi-turn entries against the no-reason checkpoint's <strong>16</strong>; the untrained base, which emits no traces, hit it <strong>zero</strong> times. Instruct — verbose by design — hit it 25 times, including one of the five tasks below, where its transcript is a context-length error rather than a conversation.</p>
+</div>
+
+<div class="find">
+  <span class="num">Reading 5</span>
+  <h3>Failing at the end state is not the same as failing at every call</h3>
+  <p>Several cards carry the verdict <code>multi_turn:instance_state_mismatch</code> — the model made sensible calls throughout and still left the API in the wrong state. Multi-turn is graded on that final object, not on the calls, which is why a transcript can read well and score zero. It is also why the multi-turn column is not a gentler version of the non-live column: the two measure different things, and the fine-tunes are strong at one and absent at the other.</p>
+</div>
+
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part six</p>
+<h2>How to read these numbers</h2>
+<p>Three caveats, in the order they affect conclusions.</p>
+<div class="finds">
+<div class="find warn">
+  <span class="num">Caveat 1</span>
+  <h3>Overall Acc is depressed by roughly 20 points for every model</h3>
+  <p><code>web_search</code> is absent and counts as 0 against 40% agentic weight. Comparisons within this page are exact; do not put these Overall figures next to the public leaderboard.</p>
+</div>
+<div class="find">
+  <span class="num">Caveat 2</span>
+  <h3>Tool schemas reach the model in a shape it never trained on</h3>
+  <p>BFCL serialises tool docs flat — <code>{"name": …, "parameters": {"type": "dict"}}</code> — while all 67,288 tool definitions in both training corpora used the OpenAI-wrapped form with <code>"type": "object"</code>. You can see the flat form in any card's system prompt. We kept BFCL's rendering deliberately: it is what every official Qwen3 entry gets, so the numbers stay leaderboard-shaped. It means single-turn scores may understate both runs slightly — and it affects both equally, so the head-to-head is unaffected.</p>
+</div>
+<div class="find">
+  <span class="num">Caveat 3</span>
+  <h3>19 entries could not run at all</h3>
+  <p>18 <code>multi_turn_long_context</code> entries exceeded the context limit and one crashed on a <code>KeyError</code>. That is a harness ceiling, not a model failure, and it caps that category at 91% of its entries for every model equally. One of the five sampled tasks hits it on the Instruct tab.</p>
+</div>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">What follows</p>
+<h2>The corpus is the thing to change</h2>
+<p>The head-to-head answers which recipe to keep — no-reason, at 58 of 60 cells — but the transcripts say that choice is worth about three points of Overall against a gap of ten times that. Single-turn is solved at epoch 1 of either run and does not improve with more training. Multi-turn is at the floor for both, at every epoch, while a same-size model that saw multi-turn data reaches 31.75%.</p>
+<p>The concrete check is cheap: count how many conversations in the corpus have more than one assistant turn, and how many contain a tool response carrying an error that the next assistant turn has to act on. If the second number is near zero, that is the finding — and the fix is data, not epochs, and not reasoning traces.</p>
+</section>
+
+<footer>
+20 SFT checkpoints + 2 references × 5,017 entries · BFCL v4 (20 of 22 scored categories) · vLLM 0.8.5, bfloat16, temperature 0.001 · 8×A100-40GB · scores from <code>score/data_overall.csv</code>, no partial evaluation · transcripts read verbatim from <code>result/*/multi_turn/</code>, sampled with a fixed seed
+</footer>
+</div>

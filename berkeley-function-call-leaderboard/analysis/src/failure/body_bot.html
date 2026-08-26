@@ -1,0 +1,62 @@
+
+<div class="callout warn">
+<p><strong>Read <code>base_65</code> carefully.</strong> It counts as a “recovery” in my statistics — a call did follow the error — but the call is <code>setHeadlights</code>, which has nothing to do with the locked doors that blocked the engine. The true recovery rate is lower than the 16–20% below; some fraction of those retries are just the model moving on.</p>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Aggregate</p>
+<h2>The pattern holds across all four categories</h2>
+<div class="tblwrap">
+<table>
+<thead><tr>
+<th>Category</th><th>Score</th><th>Turns</th><th>With calls</th><th>Prose only</th>
+<th>Tool calls</th><th>Tool errors</th><th>Retried after error</th>
+</tr></thead>
+<tbody>
+<tr><td>multi_turn_base</td><td class="acc">1.50%</td><td>734</td><td>454 (62%)</td><td>280 (38%)</td><td>610</td><td>161</td><td>25 / 154 (16%)</td></tr>
+<tr><td>multi_turn_miss_func</td><td class="acc">2.00%</td><td>930</td><td>543 (58%)</td><td>387 (42%)</td><td>712</td><td>181</td><td>28 / 173 (16%)</td></tr>
+<tr><td>multi_turn_miss_param</td><td class="acc">2.50%</td><td>934</td><td>458 (49%)</td><td>476 (51%)</td><td>594</td><td>153</td><td>26 / 146 (18%)</td></tr>
+<tr><td>multi_turn_long_context</td><td class="acc">2.00%</td><td>667</td><td>432 (65%)</td><td>235 (35%)</td><td>577</td><td>156</td><td>30 / 152 (20%)</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><strong>Two caveats on these numbers.</strong> In <code>multi_turn_miss_param</code>, asking the user for a missing parameter is the <em>correct</em> behaviour, so part of that 51% prose rate is right — yet the category still scores 2.50%, meaning the questions are landing in the wrong turns or the wrong form.</p>
+<p>Separately, <strong>19 entries never ran</strong>: 18 in <code>long_context</code> hit the 32,768-token limit (one request reached 36,155), and one crashed on a <code>'name'</code> KeyError. That is a harness ceiling, not a model failure, and it caps <code>long_context</code> at 91% of its entries.</p>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">What follows</p>
+<h2>The corpus is the likely cause</h2>
+<p>Every behaviour above is consistent with a training set of single-exchange examples: a user asks, the model emits calls, the example ends. Nothing in it teaches the model to read a <code>&lt;tool_response&gt;</code> that contains an error and try again, so at inference it does the one thing it did learn — produce a fluent reply and stop.</p>
+<p>Worth checking directly: how many conversations in <code>toolace-tooling-sft</code> contain more than one assistant turn, and how many contain a tool response carrying an error the next assistant turn has to act on. If the second number is near zero, that is the finding, and it is a data problem rather than a hyperparameter one.</p>
+<p>The decisive control is the untrained base model. If <code>qwen3-4b-base-FC</code> also scores ~2% on multi-turn, this is Qwen3-4B-Base's own ceiling and the SFT simply never addressed it. If the base scores meaningfully higher, the fine-tune <em>removed</em> an ability — a much more serious result, and one that would reframe the 83% single-turn number as narrow rather than strong.</p>
+</section>
+
+<footer>
+Generated from <code>result/qwen3-4b-sft-noreason-128-FC/multi_turn/</code> · 5,017 entries, 20 categories, ~9 min on one A100-40GB · vLLM 0.8.5 · web_search excluded (free-tier SerpAPI quota)
+</footer>
+</div>
+
+<script>
+(function(){
+  var tabs=[].slice.call(document.querySelectorAll('.tab'));
+  var panels=[].slice.call(document.querySelectorAll('.tx'));
+  function show(id){
+    tabs.forEach(function(t){
+      var on=t.dataset.t===id;
+      t.classList.toggle('on',on); t.setAttribute('aria-selected',on?'true':'false');
+    });
+    panels.forEach(function(p){p.classList.toggle('on',p.id==='tx-'+id);});
+  }
+  tabs.forEach(function(t){t.addEventListener('click',function(){show(t.dataset.t);});});
+  if(tabs.length) show(tabs[0].dataset.t);
+})();
+</script>

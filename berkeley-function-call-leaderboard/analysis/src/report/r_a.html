@@ -1,0 +1,81 @@
+<div class="wrap">
+
+<p class="eyebrow">BFCL v4 · 22 checkpoints · 110,374 generations · 8×A100-40GB</p>
+<div class="lede">
+<h1>Twenty-Two Checkpoints</h1>
+<p>We fine-tuned Qwen3-4B-Base on tool-calling data in two variants — one with reasoning traces, one without — and saved a checkpoint every epoch for ten epochs. This is all twenty of them on BFCL v4, plus the untrained base model and the official instruct model as bookends.</p>
+<p>The single-turn result is strong and arrives after one epoch. The multi-turn result is close to zero and stays there. And the most dramatic number of all — the base model's 0.00, implying it cannot call functions — turns out to be a parser artifact: re-scoring the same generations leniently puts it at <strong>58.67%</strong>. That reframes what the fine-tune bought, and it is the finding worth carrying.</p>
+</div>
+
+<div class="band">
+  <div class="cell"><span class="k">Best SFT overall</span><span class="v">28.01%</span><span class="n">no-reason, epoch 7</span></div>
+  <div class="cell"><span class="k">Instruct reference</span><span class="v">38.51%</span><span class="n">Qwen3-4B official</span></div>
+  <div class="cell"><span class="k">Best single-turn</span><span class="v">87.21%</span><span class="n">no-reason, epoch <em>1</em></span></div>
+  <div class="cell"><span class="k">Base, re-parsed</span><span class="v">58.67%</span><span class="n">non-live — scored as 0.00</span></div>
+</div>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part one</p>
+<h2>What BFCL v4 actually measures</h2>
+<p>The Berkeley Function Calling Leaderboard tests whether a model can pick the right function and fill its arguments correctly. Version 4 keeps the single-turn and multi-turn categories from v1–v3 and adds agentic ones on top, so running v4 gives the earlier signal too. We ran <strong>20 of its 22 scored categories</strong>, 5,017 generated entries per model.</p>
+
+<div class="tblwrap">
+<table>
+<thead><tr><th>Category group</th><th>Entries</th><th class="w">What it asks of the model</th><th>How it is scored</th></tr></thead>
+<tbody>
+<tr><td>Non-live simple / multiple / parallel</td><td>1,150</td><td class="w">Pick one function, or several, or several at once, from a hand-written catalogue</td><td>AST match</td></tr>
+<tr><td>Live (user-contributed)</td><td>2,251</td><td class="w">Same, but on real function schemas donated by users — messier, more realistic</td><td>AST match</td></tr>
+<tr><td>Irrelevance / relevance</td><td>1,140</td><td class="w">Recognise when <em>no</em> offered function fits, and abstain — or when one does</td><td>Abstention correctness</td></tr>
+<tr><td>Multi-turn (4 categories)</td><td>800</td><td class="w">Hold a conversation against a live stateful API — a filesystem, a vehicle, a trading bot — across several user turns, including turns with a missing function or parameter</td><td>Final API state + response</td></tr>
+<tr><td>Memory (kv / vector / rec-sum)</td><td>465</td><td class="w">Read and write to a memory backend across a session and use what it stored</td><td>Final state</td></tr>
+<tr><td class="ref">Web search <em>(excluded)</em></td><td>200</td><td class="w">Multi-hop search and page-reading via a live search API</td><td>Answer match</td></tr>
+</tbody>
+</table>
+</div>
+
+<p style="margin-top:1.1rem">The three scoring mechanisms differ in kind. <strong>AST match</strong> parses the emitted call and compares function name and arguments against accepted answers — it never executes anything. <strong>Multi-turn and memory</strong> are state-based: the benchmark runs the calls against a real Python object and compares the <em>final state</em> of that object to ground truth, so a conversation that reaches the right end state passes even by a different route, and one that gets every call right but leaves the state wrong fails.</p>
+
+<h3 style="margin-top:1.6rem">The weighting is where the headline number comes from</h3>
+<p>BFCL v4's <code>Overall Acc</code> is not an average of categories. It is a fixed weighting that puts <strong>70% of the score on multi-turn and agentic work</strong>:</p>
+
+<div class="wt">
+  <span class="a">10</span><span class="b">10</span><span class="c">10</span><span class="d">30 · multi-turn</span><span class="e">40 · agentic</span>
+</div>
+<ul class="legend"><li><span class="sw a"></span>Non-live</li><li><span class="sw b"></span>Live</li><li><span class="sw c"></span>Irrelevance</li></ul>
+
+<div class="formula">Overall = 0.10·NonLive + 0.10·Live + 0.10·Irrelevance + 0.30·MultiTurn + 0.40·Agentic
+Agentic = mean(Memory, WebSearch)</div>
+<p>We verified this against the published CSV: it reproduces every one of our 22 rows to the second decimal.</p>
+
+<div class="callout warn">
+<p><strong>This means our <code>Overall Acc</code> figures are not comparable to the public leaderboard.</strong> We skipped <code>web_search</code> — the SerpAPI key on hand is free-tier, 250 searches against a category of multi-hop tasks needing several searches each, across 22 models. A missing category is scored as <strong>0</strong>, not dropped, so web search being absent halves the agentic term and costs every model up to <strong>20 points of Overall</strong>.</p>
+<p>Comparisons <em>within</em> this table remain exact — all 22 models are missing the same category. Only the absolute Overall numbers are depressed.</p>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part two</p>
+<h2>What we ran</h2>
+<p>Two SFT runs over Qwen3-4B-Base on a ToolACE-derived corpus: one rendering assistant turns as bare tool calls (<strong>no-reason</strong>, 64 steps/epoch), one interleaving reasoning traces (<strong>reasoning</strong>, 86 steps/epoch). Ten epoch checkpoints each. All served through vLLM 0.8.5 in prompting mode with Qwen3's own tool template, which we verified renders byte-identically to the template the models were trained under.</p>
+<p>Every model saw all 5,017 entries — no partial evaluation anywhere. The full suite took about five hours across eight A100s, most of it spent on the two reference models, which never emit a stop token and so run to the 2,048-token cap on every single generation.</p>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part three</p>
+<h2>Results</h2>
+<p>Highlighted rows are the two reference models. Every figure is a percentage; latency is mean seconds per generation.</p>
+<div class="tblwrap">
+<table>
+<thead><tr><th>Model</th><th>Overall</th><th>Non-Live</th><th>Live</th><th>Irrel.</th><th>Multi-Turn</th><th>Memory</th><th>Latency</th></tr></thead>
+<tbody>
+<!--TBL-->
+</tbody>
+</table>
+</div>
+</section>

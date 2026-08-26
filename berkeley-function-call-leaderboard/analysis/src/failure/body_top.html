@@ -1,0 +1,52 @@
+<div class="wrap">
+
+<p class="eyebrow">BFCL v4 · qwen3-4b-sft-noreason-128-FC · 2,946 multi-turn turns</p>
+<div class="lede">
+<h1>Multi-Turn Collapse</h1>
+<p>This checkpoint scores <strong>83%</strong> on non-live single-turn function calling and <strong>1.5%</strong> on multi-turn. That gap is too wide to be a difficulty curve. Reading the transcripts, the tool calls themselves are fine — what is missing is the loop around them.</p>
+</div>
+
+<div class="band">
+  <div class="cell"><span class="k">Non-live AST</span><span class="v good">83.17%</span><span class="n">single-turn composition</span></div>
+  <div class="cell"><span class="k">Live AST</span><span class="v good">72.76%</span><span class="n">user-contributed</span></div>
+  <div class="cell"><span class="k">Multi-turn</span><span class="v bad">2.00%</span><span class="n">avg of four categories</span></div>
+  <div class="cell"><span class="k">Memory</span><span class="v bad">10.54%</span><span class="n">agentic, also stateful</span></div>
+</div>
+
+<section>
+<p class="eyebrow">The diagnosis</p>
+<h2>Syntax is not the problem</h2>
+<p>Every tool call the model emitted parsed cleanly. BFCL logged <code>Successfully decoded model response</code> on essentially every step that contained a call, and the JSON inside <code>&lt;tool_call&gt;</code> was well-formed throughout. The model knows the format. Four behaviours account for the collapse instead.</p>
+
+<div class="finds">
+  <div class="find f-err">
+    <span class="tagline">Failure 1 · the decisive one</span>
+    <h3>It does not act on tool errors</h3>
+    <p>Across 625 turns that hit a tool error, the model issued any follow-up call in only <strong>16–20%</strong> of them. The other ~80% it turns to the user and narrates the failure. The environment's errors are not cryptic — they state the fix outright: <em>“All doors must be locked before starting the engine.”</em></p>
+  </div>
+  <div class="find f-exit">
+    <span class="tagline">Failure 2</span>
+    <h3>It exits the turn to prose</h3>
+    <p>38–51% of turns contain <strong>no tool call at all</strong> — just an explanation or a clarifying question. A turn ends the moment the model emits no call, so prose is a hard stop. Median turn length is 1–2 steps; almost nothing runs past 3.</p>
+  </div>
+  <div class="find">
+    <span class="tagline">Failure 3</span>
+    <h3>It does not carry state across turns</h3>
+    <p>In <code>base_0</code>, turn 3 re-issues turn 0's calls verbatim — including <code>mkdir temp</code>, which had already succeeded — and gets <code>File exists</code> back. Nothing from earlier turns informs later ones.</p>
+  </div>
+  <div class="find">
+    <span class="tagline">Failure 4</span>
+    <h3>It asks instead of looking</h3>
+    <p>Given “search the file for budget analysis”, it asks the user which file — in a session where the filename appeared one turn earlier and <code>ls</code> was on the tool list. It prefers a question to an inspection call.</p>
+  </div>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Evidence</p>
+<h2>Three transcripts, rendered in full</h2>
+<p>Real generations from this run, unedited. Violet marks the model leaving the loop to talk to the user; amber marks a tool error it was handed.</p>
+
+<div class="tabs" role="tablist">

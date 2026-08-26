@@ -1,0 +1,121 @@
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part four</p>
+<h2>Analysis</h2>
+
+<div class="figs">
+<figure>
+  <h3>Single-turn accuracy is flat across training</h3>
+  <!--C1-->
+  <figcaption>Non-live AST accuracy by epoch. Ten epochs of training move it by about a point, and epoch 1 of the no-reason run is the highest of the twenty — statistically level with the official instruct model.</figcaption>
+</figure>
+<figure>
+  <h3>Multi-turn never leaves the floor</h3>
+  <!--C2-->
+  <figcaption>Multi-turn accuracy by epoch, on a 0–4% axis. The instruct model scores 31.75% on this same test and is ten times off the top of this chart — plotting it here would flatten both curves to a single line.</figcaption>
+</figure>
+</div>
+
+<figure style="margin-top:18px">
+  <h3>Where the gap actually lives</h3>
+  <!--C3-->
+  <ul class="legend" style="margin-top:8px">
+    <li><span class="sw a"></span>Base (untrained)</li>
+    <li><span class="sw b"></span>SFT best (no-reason, epoch 7)</li>
+    <li><span class="sw c"></span>Instruct (official)</li>
+  </ul>
+  <figcaption>The SFT matches instruct on single-turn work and trails it by an order of magnitude on multi-turn. Base scores zero on the first four sections — see finding 1 for why that number should not be read as "cannot call functions".</figcaption>
+</figure>
+
+<div class="finds">
+
+<div class="find warn">
+  <span class="num">Finding 1 · read this before quoting any number</span>
+  <h3>The base model's 0.00 is a parser artifact, and we measured what it hides</h3>
+  <p>Base scores <strong>0.00</strong> on non-live, live and multi-turn. But <strong>399 of 400</strong> <code>simple_python</code> outputs contain a well-formed <code>{"name": …, "arguments": …}</code> object with the right function and arguments. They score zero because <strong>0 of 5,017</strong> generations wrap it in the <code>&lt;tool_call&gt;</code> tags the parser requires.</p>
+  <p>So we re-scored the <em>same generations</em> with a lenient parser — no new inference, no new sampling, the model's choices untouched. It wraps every well-formed call object it finds and discards the degenerate repetition that follows (base never emits a stop token, so every generation runs to the 2,048-token cap). A fidelity check confirms the rewrite invents nothing: <strong>45,826 extracted calls, zero</strong> whose function name is absent from the raw output.</p>
+  <div class="tblwrap" style="margin:14px 0 4px">
+  <table>
+  <thead><tr><th>Non-live breakdown</th><th>simple</th><th>multiple</th><th>parallel</th><th>par-mult</th><th>Non-Live</th><th>Live</th><th>Irrel.</th></tr></thead>
+  <tbody>
+  <tr><td>Base — as scored (strict)</td><td>0.00</td><td>0.00</td><td>0.00</td><td>0.00</td><td>0.00</td><td>0.00</td><td>100.00</td></tr>
+  <tr class="ref"><td>Base — lenient re-parse</td><td>65.67</td><td>58.50</td><td>47.50</td><td>63.00</td><td>58.67</td><td>40.49</td><td>17.92</td></tr>
+  <tr><td>SFT no-reason epoch 1</td><td>74.33</td><td>91.50</td><td>92.00</td><td>91.00</td><td>87.21</td><td>75.80</td><td>74.67</td></tr>
+  <tr><td>Instruct</td><td>73.42</td><td>96.50</td><td>91.50</td><td>87.50</td><td>87.23</td><td>81.79</td><td>79.07</td></tr>
+  </tbody></table>
+  </div>
+  <p><strong>The untrained base already calls functions at 58.67% non-live and 40.49% live.</strong> The real gain from fine-tuning is +28.5 and +35.3 points — substantial, but a fraction of the apparent 0 → 87.</p>
+  <p>And the 100.00% irrelevance detection collapses to <strong>17.92%</strong> the moment its calls parse, which settles what that number was: pure artifact. Nothing parsed, so it "abstained" everywhere. Read the other way, teaching the model <em>when not to call</em> (17.92 → 74.67) is the single largest genuine gain the fine-tune produced.</p>
+</div>
+
+<div class="find">
+  <span class="num">Finding 1b</span>
+  <h3>What the fine-tune actually taught: selection and parallelism, not calling</h3>
+  <p>The lenient breakdown separates two abilities the strict score fused together. On <strong>simple</strong> calls — one function offered, fill its arguments — base is already at 65.67 against the fine-tune's 74.33 and instruct's 73.42. Barely a gap.</p>
+  <p>The gap is everywhere else: <strong>multiple</strong> 58.50 → 91.50 and <strong>parallel</strong> 47.50 → 92.00. Base can fill in a function it is handed; it cannot reliably pick the right one from a catalogue or emit several calls at once. That — plus abstention and the wrapper protocol — is what the corpus taught.</p>
+</div>
+
+<div class="find">
+  <span class="num">Finding 2 · the control question, answered</span>
+  <h3>The fine-tune did not break multi-turn — it never added it</h3>
+  <p>This was the open question from the failure analysis: did SFT <em>remove</em> an ability, or fail to install one? The lenient re-parse makes the control exact. Base with a working parser scores <strong>1.38%</strong> on multi-turn; the best fine-tune scores <strong>3.25%</strong> and epoch 1 scores <strong>1.25%</strong> — below base. Ten epochs of tool-calling data moved multi-turn by essentially nothing. Meanwhile the official instruct model — same architecture, same 4B parameters — reaches <strong>31.75%</strong> on the identical test.</p>
+  <p>The ability is plainly reachable at this scale. Our corpus does not teach it. Transcript-level evidence agrees: on the 625 turns that hit a tool error, the model issued any follow-up call only <strong>16–20%</strong> of the time, and 38–51% of turns contain no tool call at all. It emits a plausible batch of calls, reads a precise error telling it what to fix, and explains the failure to the user instead of fixing it.</p>
+</div>
+
+<div class="find">
+  <span class="num">Finding 3</span>
+  <h3>Reasoning traces cost capability rather than adding it</h3>
+  <p>The no-reason run beats the reasoning run on <strong>every metric at every epoch</strong> — about 3 points of Overall, 2–4 points of non-live AST, and roughly double on memory. Twenty runs pointing the same direction is not noise.</p>
+  <p>One caveat on causality: the two corpora differ in supervised-token density as well as in content (36.6% vs 14.1%), so this compares two training recipes, not reasoning-versus-no-reasoning in isolation.</p>
+</div>
+
+<div class="find">
+  <span class="num">Finding 4</span>
+  <h3>Epoch barely matters — so the checkpoint selection measured the wrong thing</h3>
+  <p>No-reason non-live AST across ten epochs: <code>87.21 · 83.17 · 85.81 · 84.81 · 84.98 · 85.81 · 85.96 · 86.08 · 86.08 · 86.08</code>. Essentially flat. Over that same span <code>eval_loss</code> nearly doubled (0.378 → 0.702) and training loss fell to 3.0e-4 with token accuracy 1.000 — textbook memorisation.</p>
+  <p>That memorisation cost almost nothing downstream. And <strong>epoch 1</strong> — the checkpoint an eval-loss criterion discards early, before the curve's minimum — turns out to have the highest single-turn score of the twenty. One epoch is enough for single-turn tool calling; the remaining nine bought roughly one point of multi-turn and nothing else.</p>
+</div>
+
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part five</p>
+<h2>How to read these numbers</h2>
+<p>Three caveats, in the order they affect conclusions.</p>
+<div class="finds">
+<div class="find warn">
+  <span class="num">Caveat 1</span>
+  <h3>Overall Acc is depressed by roughly 20 points for every model</h3>
+  <p><code>web_search</code> is absent and counts as 0 against 40% agentic weight. Within-table comparisons are exact; do not put these Overall figures next to the public leaderboard.</p>
+</div>
+<div class="find">
+  <span class="num">Caveat 2</span>
+  <h3>Tool schemas reach the model in a shape it never trained on</h3>
+  <p>BFCL serialises tool docs flat — <code>{"name": …, "parameters": {"type": "dict"}}</code> — while all 67,288 tool definitions in both training corpora used the OpenAI-wrapped form with <code>"type": "object"</code>. We kept BFCL's rendering deliberately: it is what every official Qwen3 entry gets, so the numbers stay leaderboard-shaped. But it means single-turn scores may understate the models slightly.</p>
+</div>
+<div class="find">
+  <span class="num">Caveat 3</span>
+  <h3>19 entries could not run at all</h3>
+  <p>18 <code>multi_turn_long_context</code> entries exceeded the 32,768-token context limit (one request reached 36,155) and one crashed on a <code>KeyError</code>. That is a harness ceiling, not a model failure, and it caps that category at 91% of its entries for every model equally.</p>
+</div>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">What follows</p>
+<h2>The corpus is the thing to change</h2>
+<p>Every result here points at the training data rather than the hyperparameters. Single-turn is solved at epoch 1 and does not improve with more training. Multi-turn is near zero at every epoch of both runs, while a same-size model that saw multi-turn data reaches 31.75%.</p>
+<p>The concrete check is cheap: count how many conversations in the corpus have more than one assistant turn, and how many contain a tool response carrying an error that the next assistant turn has to act on. If the second number is near zero, that is the finding — and the fix is data, not epochs.</p>
+<p>Two smaller follow-ups worth the GPU time: run the epoch-1 no-reason checkpoint as the headline model rather than an epoch-2 pick, and add <code>web_search</code> once a paid SerpAPI tier is in place so the Overall figures become leaderboard-comparable.</p>
+</section>
+
+<footer>
+22 models × 5,017 entries = 110,374 generations · BFCL v4 (20 of 22 scored categories) · vLLM 0.8.5, bfloat16, temperature 0.001 · 8×A100-40GB, ≈5 h wall clock · scores from <code>score/data_overall.csv</code>, no partial evaluation
+</footer>
+</div>

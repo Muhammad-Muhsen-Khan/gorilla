@@ -1,0 +1,122 @@
+<div class="wrap">
+
+<p class="eyebrow">BFCL v4 · 20 checkpoints head-to-head · 20 transcripts rendered in full</p>
+<div class="lede">
+<h1>Reason vs No-Reason</h1>
+<p>Two SFT runs over the same base model, the same corpus, the same ten epochs — one trained to emit reasoning traces before its tool calls, one trained to emit the calls alone. This page puts them in a single table, cell against cell, and then opens twenty complete conversations so you can read what the numbers are made of.</p>
+<p>The table settles it quickly. Across <strong>60 comparable cells</strong> — ten epochs × six metrics — the no-reason run wins <strong>58</strong>, ties one, and loses one. There is no epoch at which reasoning is the better checkpoint, and no metric on which it closes.</p>
+</div>
+
+<div class="scorecard">
+  <div class="sc"><span class="k">Overall</span><div class="pair"><span class="a">27.53</span><span class="vs">vs</span><span class="b">24.63</span></div><span class="d">−2.90 · mean of 10 epochs</span></div>
+  <div class="sc"><span class="k">Non-Live</span><div class="pair"><span class="a">85.60</span><span class="vs">vs</span><span class="b">83.08</span></div><span class="d">−2.52</span></div>
+  <div class="sc"><span class="k">Live</span><div class="pair"><span class="a">71.92</span><span class="vs">vs</span><span class="b">68.95</span></div><span class="d">−2.97</span></div>
+  <div class="sc"><span class="k">Irrelevance</span><div class="pair"><span class="a">85.16</span><span class="vs">vs</span><span class="b">76.08</span></div><span class="d">−9.08 · widest gap</span></div>
+  <div class="sc"><span class="k">Multi-Turn</span><div class="pair"><span class="a">2.23</span><span class="vs">vs</span><span class="b">0.78</span></div><span class="d">−1.45 · both at the floor</span></div>
+  <div class="sc"><span class="k">Memory</span><div class="pair"><span class="a">12.99</span><span class="vs">vs</span><span class="b">7.96</span></div><span class="d">−5.03 · nearly halved</span></div>
+</div>
+<ul class="legend" style="margin-top:12px">
+  <li><span class="sw b"></span>no-reason (64 steps/epoch)</li>
+  <li><span class="sw c"></span>reasoning (86 steps/epoch)</li>
+</ul>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part one</p>
+<h2>What BFCL v4 actually measures</h2>
+<p>The Berkeley Function Calling Leaderboard tests whether a model can pick the right function and fill its arguments correctly. Version 4 keeps the single-turn and multi-turn categories from v1–v3 and adds agentic ones on top, so running v4 gives the earlier signal too. We ran <strong>20 of its 22 scored categories</strong>, 5,017 generated entries per model.</p>
+
+<div class="tblwrap">
+<table>
+<thead><tr><th>Category group</th><th>Entries</th><th class="w">What it asks of the model</th><th>How it is scored</th></tr></thead>
+<tbody>
+<tr><td>Non-live simple / multiple / parallel</td><td>1,150</td><td class="w">Pick one function, or several, or several at once, from a hand-written catalogue</td><td>AST match</td></tr>
+<tr><td>Live (user-contributed)</td><td>2,251</td><td class="w">Same, but on real function schemas donated by users — messier, more realistic</td><td>AST match</td></tr>
+<tr><td>Irrelevance / relevance</td><td>1,140</td><td class="w">Recognise when <em>no</em> offered function fits, and abstain — or when one does</td><td>Abstention correctness</td></tr>
+<tr><td>Multi-turn (4 categories)</td><td>800</td><td class="w">Hold a conversation against a live stateful API — a filesystem, a vehicle, a trading bot — across several user turns, including turns with a missing function or parameter</td><td>Final API state + response</td></tr>
+<tr><td>Memory (kv / vector / rec-sum)</td><td>465</td><td class="w">Read and write to a memory backend across a session and use what it stored</td><td>Final state</td></tr>
+<tr><td class="ref">Web search <em>(excluded)</em></td><td>200</td><td class="w">Multi-hop search and page-reading via a live search API</td><td>Answer match</td></tr>
+</tbody>
+</table>
+</div>
+
+<p style="margin-top:1.1rem">The three scoring mechanisms differ in kind. <strong>AST match</strong> parses the emitted call and compares function name and arguments against accepted answers — it never executes anything. <strong>Multi-turn and memory</strong> are state-based: the benchmark runs the calls against a real Python object and compares the <em>final state</em> of that object to ground truth, so a conversation that reaches the right end state passes even by a different route, and one that gets every call right but leaves the state wrong fails. Part three shows exactly this happening.</p>
+
+<h3 style="margin-top:1.6rem">The weighting is where the headline number comes from</h3>
+<p>BFCL v4's <code>Overall Acc</code> is not an average of categories. It is a fixed weighting that puts <strong>70% of the score on multi-turn and agentic work</strong>:</p>
+
+<div class="wt">
+  <span class="a">10</span><span class="b">10</span><span class="c">10</span><span class="d">30 · multi-turn</span><span class="e">40 · agentic</span>
+</div>
+<ul class="legend"><li><span class="sw a"></span>Non-live</li><li><span class="sw b"></span>Live</li><li><span class="sw c"></span>Irrelevance</li></ul>
+
+<div class="formula">Overall = 0.10·NonLive + 0.10·Live + 0.10·Irrelevance + 0.30·MultiTurn + 0.40·Agentic
+Agentic = mean(Memory, WebSearch)</div>
+<p>We verified this against the published CSV: it reproduces every one of our 22 rows to the second decimal.</p>
+
+<div class="callout warn">
+<p><strong>Our <code>Overall Acc</code> figures are not comparable to the public leaderboard.</strong> We skipped <code>web_search</code> — the SerpAPI key on hand is free-tier, 250 searches against a category of multi-hop tasks needing several searches each, across 22 models. A missing category is scored as <strong>0</strong>, not dropped, so web search being absent halves the agentic term and costs every model up to <strong>20 points of Overall</strong>.</p>
+<p>Comparisons <em>within</em> this page remain exact — every model is missing the same category. Only the absolute Overall numbers are depressed.</p>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part two</p>
+<h2>The head-to-head</h2>
+<p>Two SFT runs over Qwen3-4B-Base on a ToolACE-derived corpus: one rendering assistant turns as bare tool calls (<strong>no-reason</strong>, 64 steps/epoch), one interleaving reasoning traces (<strong>reasoning</strong>, 86 steps/epoch). Ten epoch checkpoints each, all 5,017 entries, no partial evaluation. Served through vLLM 0.8.5 in prompting mode with Qwen3's own tool template, which renders byte-identically to the template the models were trained under.</p>
+<p>Every cell is a percentage. <strong>The winner of each pair is shaded</strong> — blue where no-reason wins, orange where reasoning does. The point of the table is the colour, not the digits: it is blue almost everywhere.</p>
+
+<div class="tblwrap">
+<table class="cmp">
+<thead><!--PAIRED_HEAD--></thead>
+<tbody>
+<!--PAIRED_BODY-->
+<!--PAIRED_FOOT-->
+</tbody>
+</table>
+</div>
+<p style="margin-top:.9rem;font-size:.85rem;color:var(--muted)">Δ is reasoning minus no-reason, on the ten-epoch mean. Negative everywhere.</p>
+
+<div class="callout">
+<p><strong>The single orange cell is epoch 2, non-live AST — 85.88 against 83.17.</strong> Epoch 1 multi-turn is an exact tie at 1.25. Every one of the other 58 cells goes to no-reason. Twenty independently trained checkpoints agreeing this consistently is not sampling noise.</p>
+<p>One caveat on causality, which the table cannot settle: the two corpora differ in supervised-token density as well as in content — 36.6% of tokens supervised in the reasoning run against 14.1% in the no-reason run. This compares two training recipes, not reasoning-versus-no-reasoning in isolation.</p>
+</div>
+
+<div class="figs">
+<figure>
+  <h3>Single-turn accuracy, by epoch</h3>
+  <!--C1-->
+  <figcaption>Non-live AST accuracy. Both runs are flat across ten epochs; the orange line sits below the blue one at nine of ten points. Epoch 1 of the no-reason run is the highest of the twenty and level with the official instruct model.</figcaption>
+</figure>
+<figure>
+  <h3>Multi-turn, by epoch</h3>
+  <!--C2-->
+  <figcaption>Same axis pair, 0–4%. Neither run leaves the floor. The instruct model scores 31.75% on this identical test — eight times off the top of this chart.</figcaption>
+</figure>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Part three</p>
+<h2>Where both runs sit</h2>
+<p>The head-to-head only says which fine-tune is better. These five rows say whether either one matters. The base model appears twice — once as BFCL scored it, once re-scored from the <em>same generations</em> with a lenient parser that accepts a well-formed call object without the <code>&lt;tool_call&gt;</code> wrapper.</p>
+
+<div class="tblwrap">
+<table class="cmp blt">
+<thead><tr><th class="ep">Model</th><th>Overall</th><th>Non-Live</th><th>Live</th><th>Irrel.</th><th>Multi-Turn</th><th>Memory</th></tr></thead>
+<tbody>
+<!--BASELINES-->
+</tbody>
+</table>
+</div>
+
+<div class="callout warn">
+<p><strong>Base's 0.00 is a parser artifact.</strong> <strong>399 of 400</strong> <code>simple_python</code> outputs contain a well-formed <code>{"name": …, "arguments": …}</code> object with the right function and arguments — but <strong>0 of 5,017</strong> generations wrap it in the tags the parser requires. Re-scored leniently, with no new inference and no new sampling, the untrained base calls functions at <strong>58.67%</strong> non-live and <strong>40.49%</strong> live. A fidelity check confirms the rewrite invents nothing: 45,826 extracted calls, zero whose function name is absent from the raw output.</p>
+<p>So the real gain from fine-tuning on single-turn is <strong>+28.5 points</strong>, not +87. And base's 100.00% irrelevance detection collapses to 17.92% the moment its calls parse — it was never abstaining, nothing parsed. Read the other way, teaching the model <em>when not to call</em> (17.92 → 85.16 mean for no-reason) is the largest genuine gain either fine-tune produced.</p>
+</div>
+</section>

@@ -1,0 +1,478 @@
+<title>Multi-Turn Collapse</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#FAFAFC; --surface:#FFFFFF; --sunk:#F1F2F7;
+  --ink:#171C26; --ink-2:#3D4557; --muted:#6B7286; --rule:#DFE2EB;
+  --indigo:#4453A0; --indigo-soft:#EEF0FA;
+  --err:#A8481A; --err-soft:#FBEFE7; --err-rule:#E8C4AB;
+  --exit:#63479A; --exit-soft:#F2EDFA;
+  --ok:#1B6E5B;
+  --shadow:0 1px 2px rgba(23,28,38,.05),0 8px 24px -12px rgba(23,28,38,.14);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#111419; --surface:#191D25; --sunk:#14181F;
+  --ink:#E7E9EF; --ink-2:#B9BFCE; --muted:#8992A5; --rule:#2A3039;
+  --indigo:#8D99E0; --indigo-soft:#1D2230;
+  --err:#E39362; --err-soft:#2A1F19; --err-rule:#4A3527;
+  --exit:#AE93E0; --exit-soft:#221C30;
+  --ok:#54BE9F;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -14px rgba(0,0,0,.6);
+}}
+:root[data-theme="dark"]{
+  --ground:#111419; --surface:#191D25; --sunk:#14181F;
+  --ink:#E7E9EF; --ink-2:#B9BFCE; --muted:#8992A5; --rule:#2A3039;
+  --indigo:#8D99E0; --indigo-soft:#1D2230;
+  --err:#E39362; --err-soft:#2A1F19; --err-rule:#4A3527;
+  --exit:#AE93E0; --exit-soft:#221C30;
+  --ok:#54BE9F;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -14px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  font-size:16px; line-height:1.6; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1000px;margin:0 auto;padding:56px 28px 96px}
+.lede{max-width:64ch}
+h1{
+  font-family:"IBM Plex Serif",Georgia,serif; font-weight:600;
+  font-size:clamp(2rem,4.4vw,3rem); line-height:1.1; letter-spacing:-.02em;
+  margin:0 0 .5rem; text-wrap:balance;
+}
+h2{
+  font-family:"IBM Plex Sans",sans-serif; font-weight:600;
+  font-size:1.32rem; letter-spacing:-.01em; margin:0 0 .5rem; text-wrap:balance;
+}
+h3{font-size:1rem;font-weight:600;margin:0 0 .35rem}
+p{margin:0 0 1rem;color:var(--ink-2)}
+.lede p{font-size:1.06rem}
+a{color:var(--indigo)}
+.eyebrow{
+  font-family:"IBM Plex Mono",monospace; font-size:.72rem; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
+  margin:0 0 1.1rem;
+}
+code,pre{font-family:"IBM Plex Mono",ui-monospace,monospace}
+code{font-size:.87em;background:var(--sunk);padding:.1em .34em;border-radius:3px}
+section{margin-top:56px}
+.rule{height:1px;background:var(--rule);border:0;margin:56px 0 0}
+
+/* ---- headline stat band ---- */
+.band{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:1px; background:var(--rule); border:1px solid var(--rule);
+  border-radius:10px; overflow:hidden; margin-top:34px;
+}
+.cell{background:var(--surface);padding:20px 22px}
+.cell .k{
+  font-family:"IBM Plex Mono",monospace; font-size:.7rem; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted); display:block; margin-bottom:.5rem;
+}
+.cell .v{
+  font-family:"IBM Plex Serif",Georgia,serif; font-size:2rem; font-weight:600;
+  line-height:1; font-variant-numeric:tabular-nums; display:block;
+}
+.cell .n{font-size:.8rem;color:var(--muted);display:block;margin-top:.45rem}
+.v.good{color:var(--ok)} .v.bad{color:var(--err)}
+
+/* ---- findings ---- */
+.finds{display:grid;gap:14px;margin-top:22px}
+.find{
+  background:var(--surface); border:1px solid var(--rule); border-radius:10px;
+  padding:18px 20px 18px 22px; position:relative; box-shadow:var(--shadow);
+}
+.find::before{
+  content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px;
+  border-radius:0 3px 3px 0; background:var(--indigo);
+}
+.find.f-err::before{background:var(--err)}
+.find.f-exit::before{background:var(--exit)}
+.find p{margin:0;font-size:.94rem}
+.find .tagline{
+  font-family:"IBM Plex Mono",monospace;font-size:.7rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);display:block;margin-bottom:.4rem;
+}
+
+/* ---- table ---- */
+.tblwrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface);margin-top:22px}
+table{border-collapse:collapse;width:100%;font-size:.87rem;min-width:640px}
+th,td{padding:11px 14px;text-align:right;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left;white-space:nowrap}
+thead th{
+  font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);font-weight:500;
+  background:var(--sunk);
+}
+tbody td{font-variant-numeric:tabular-nums;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td.acc{color:var(--err);font-weight:600}
+
+/* ---- transcript explorer ---- */
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 18px}
+.tab{
+  flex:1 1 220px; text-align:left; cursor:pointer;
+  background:var(--surface); border:1px solid var(--rule); border-radius:9px;
+  padding:11px 14px; color:var(--ink-2); font-family:inherit; font-size:.86rem;
+  transition:border-color .15s,background .15s;
+}
+.tab:hover{border-color:var(--indigo)}
+.tab:focus-visible{outline:2px solid var(--indigo);outline-offset:2px}
+.tab.on{border-color:var(--indigo);background:var(--indigo-soft)}
+.tab .tid{
+  display:block;font-family:"IBM Plex Mono",monospace;font-size:.78rem;
+  font-weight:500;color:var(--ink);margin-bottom:.18rem;
+}
+.tab .tsub{display:block;font-size:.78rem;color:var(--muted);line-height:1.35}
+.tx{display:none}
+.tx.on{display:block}
+
+.turn{margin-bottom:26px}
+.turn-h{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.tnum{
+  font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);
+}
+.turn-h::after{content:"";flex:1;height:1px;background:var(--rule)}
+.who{
+  font-family:"IBM Plex Mono",monospace;font-size:.64rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);display:block;margin-bottom:.3rem;
+}
+.msg{border-radius:8px;padding:11px 14px;margin-bottom:8px}
+.msg p{margin:0;font-size:.9rem;color:var(--ink)}
+.msg.user{background:var(--sunk);border:1px solid var(--rule)}
+.msg.calls{background:var(--surface);border:1px solid var(--rule)}
+.msg.calls pre{
+  margin:0;font-size:.78rem;line-height:1.55;white-space:pre-wrap;
+  word-break:break-word;color:var(--ink);
+}
+.msg.prose{background:var(--exit-soft);border:1px solid var(--rule)}
+.msg.prose .who{color:var(--exit)}
+.step{display:flex;gap:12px;margin-bottom:6px}
+.snum{
+  font-family:"IBM Plex Mono",monospace;font-size:.64rem;color:var(--muted);
+  padding-top:13px;white-space:nowrap;min-width:44px;letter-spacing:.05em;
+}
+.sbody{flex:1;min-width:0;border-left:2px solid var(--rule);padding-left:14px}
+.tool{
+  background:var(--sunk);border:1px solid var(--rule);border-radius:8px;
+  padding:9px 13px;margin-bottom:8px;
+}
+.tool pre{
+  margin:0;font-size:.75rem;line-height:1.5;white-space:pre-wrap;
+  word-break:break-word;color:var(--ink-2);
+}
+.tool.err{background:var(--err-soft);border-color:var(--err-rule)}
+.tool.err .who{color:var(--err)}
+.tool.err pre{color:var(--ink)}
+.note{
+  font-family:"IBM Plex Mono",monospace;font-size:.7rem;color:var(--exit);
+  padding:5px 0 3px 2px;letter-spacing:.02em;
+}
+.note::before{content:"⌐ ";opacity:.7}
+
+.callout{
+  border:1px solid var(--rule); border-left:3px solid var(--indigo);
+  background:var(--surface); border-radius:0 9px 9px 0;
+  padding:16px 20px; margin-top:22px;
+}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{border-left-color:var(--err)}
+footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);
+  font-size:.8rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+<div class="wrap">
+
+<p class="eyebrow">BFCL v4 · qwen3-4b-sft-noreason-128-FC · 2,946 multi-turn turns</p>
+<div class="lede">
+<h1>Multi-Turn Collapse</h1>
+<p>This checkpoint scores <strong>83%</strong> on non-live single-turn function calling and <strong>1.5%</strong> on multi-turn. That gap is too wide to be a difficulty curve. Reading the transcripts, the tool calls themselves are fine — what is missing is the loop around them. The 22-checkpoint suite has since settled why; see the closing section.</p>
+</div>
+
+<div class="band">
+  <div class="cell"><span class="k">Non-live AST</span><span class="v good">83.17%</span><span class="n">single-turn composition</span></div>
+  <div class="cell"><span class="k">Live AST</span><span class="v good">72.76%</span><span class="n">user-contributed</span></div>
+  <div class="cell"><span class="k">Multi-turn</span><span class="v bad">2.00%</span><span class="n">avg of four categories</span></div>
+  <div class="cell"><span class="k">Base floor</span><span class="v bad">1.38%</span><span class="n">multi-turn, lenient parse</span></div>
+</div>
+
+<section>
+<p class="eyebrow">The diagnosis</p>
+<h2>Syntax is not the problem</h2>
+<p>Every tool call the model emitted parsed cleanly. BFCL logged <code>Successfully decoded model response</code> on essentially every step that contained a call, and the JSON inside <code>&lt;tool_call&gt;</code> was well-formed throughout. The model knows the format. Four behaviours account for the collapse instead.</p>
+
+<div class="finds">
+  <div class="find f-err">
+    <span class="tagline">Failure 1 · the decisive one</span>
+    <h3>It does not act on tool errors</h3>
+    <p>Across 625 turns that hit a tool error, the model issued any follow-up call in only <strong>16–20%</strong> of them. The other ~80% it turns to the user and narrates the failure. The environment's errors are not cryptic — they state the fix outright: <em>“All doors must be locked before starting the engine.”</em></p>
+  </div>
+  <div class="find f-exit">
+    <span class="tagline">Failure 2</span>
+    <h3>It exits the turn to prose</h3>
+    <p>38–51% of turns contain <strong>no tool call at all</strong> — just an explanation or a clarifying question. A turn ends the moment the model emits no call, so prose is a hard stop. Median turn length is 1–2 steps; almost nothing runs past 3.</p>
+  </div>
+  <div class="find">
+    <span class="tagline">Failure 3</span>
+    <h3>It does not carry state across turns</h3>
+    <p>In <code>base_0</code>, turn 3 re-issues turn 0's calls verbatim — including <code>mkdir temp</code>, which had already succeeded — and gets <code>File exists</code> back. Nothing from earlier turns informs later ones.</p>
+  </div>
+  <div class="find">
+    <span class="tagline">Failure 4</span>
+    <h3>It asks instead of looking</h3>
+    <p>Given “search the file for budget analysis”, it asks the user which file — in a session where the filename appeared one turn earlier and <code>ls</code> was on the tool list. It prefers a question to an inspection call.</p>
+  </div>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Evidence</p>
+<h2>Three transcripts, rendered in full</h2>
+<p>Real generations from this run, unedited. Violet marks the model leaving the loop to talk to the user; amber marks a tool error it was handed.</p>
+
+<div class="tabs" role="tablist">
+<button class="tab on" id="tab-multi_turn_base_0" data-t="multi_turn_base_0" role="tab" aria-selected="true"><span class="tid">base_0</span><span class="tsub">Never enters the directory, then repeats itself</span></button>
+<button class="tab" id="tab-multi_turn_base_54" data-t="multi_turn_base_54" role="tab" aria-selected="false"><span class="tid">base_54</span><span class="tsub">Told exactly how to fix it; explains instead</span></button>
+<button class="tab" id="tab-multi_turn_base_65" data-t="multi_turn_base_65" role="tab" aria-selected="false"><span class="tid">base_65</span><span class="tsub">“Recovers” by calling something unrelated</span></button></div>
+<div class="tx on" id="tx-multi_turn_base_0" role="tabpanel" aria-labelledby="tab-multi_turn_base_0">
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 0</span></div>
+<div class="msg user"><span class="who">user</span><p>Move &#x27;final_report.pdf&#x27; within document directory to &#x27;temp&#x27; directory in document. Make sure to create the directory</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;mkdir&quot;, &quot;arguments&quot;: {&quot;dir_name&quot;: &quot;temp&quot;}}
+&lt;/tool_call&gt;
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;mv&quot;, &quot;arguments&quot;: {&quot;source&quot;: &quot;final_report.pdf&quot;, &quot;destination&quot;: &quot;temp&quot;}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool"><span class="who">tool</span><pre>None</pre></div>
+<div class="tool err"><span class="who">tool error</span><pre>{&quot;error&quot;: &quot;mv: cannot move &#x27;final_report.pdf&#x27;: No such file or directory&quot;}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 1</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>The move operation for &#x27;final_report.pdf&#x27; failed because the file does not exist in the specified location. Please check the file&#x27;s current location and try again.</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 1</span></div>
+<div class="msg user"><span class="who">user</span><p>Perform a detailed search using grep to identify sections in the file pertaining to &#x27;budget analysis&#x27;.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>Could you please provide the name of the file you want to search within the current directory for sections related to &#x27;budget analysis&#x27;?</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 2</span></div>
+<div class="msg user"><span class="who">user</span><p>Upon identifying the requisite &#x27;budget analysis&#x27; content, sort the &#x27;final_report.pdf&#x27; by line for improved clarity and comprehension.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>Could you please provide the name of the file you want to search within the current directory for sections related to &#x27;budget analysis&#x27;?</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 3</span></div>
+<div class="msg user"><span class="who">user</span><p>Move &#x27;previous_report.pdf&#x27; in document directory to temp as well and having final report also there, proceed to juxtapose it with &#x27;previous_report.pdf&#x27; to detect any critical alterations.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;mkdir&quot;, &quot;arguments&quot;: {&quot;dir_name&quot;: &quot;temp&quot;}}
+&lt;/tool_call&gt;
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;mv&quot;, &quot;arguments&quot;: {&quot;source&quot;: &quot;final_report.pdf&quot;, &quot;destination&quot;: &quot;temp&quot;}}
+&lt;/tool_call&gt;
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;mv&quot;, &quot;arguments&quot;: {&quot;source&quot;: &quot;previous_report.pdf&quot;, &quot;destination&quot;: &quot;temp&quot;}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool err"><span class="who">tool error</span><pre>{&quot;error&quot;: &quot;mkdir: cannot create directory &#x27;temp&#x27;: File exists&quot;}</pre></div>
+<div class="tool err"><span class="who">tool error</span><pre>{&quot;error&quot;: &quot;mv: cannot move &#x27;final_report.pdf&#x27;: No such file or directory&quot;}</pre></div>
+<div class="tool err"><span class="who">tool error</span><pre>{&quot;error&quot;: &quot;mv: cannot move &#x27;previous_report.pdf&#x27;: No such file or directory&quot;}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 1</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>The move operation for &#x27;final_report.pdf&#x27; and &#x27;previous_report.pdf&#x27; failed because the files do not exist in the specified location. Please check the files&#x27; current location and try again.</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+</div>
+<div class="tx" id="tx-multi_turn_base_54" role="tabpanel" aria-labelledby="tab-multi_turn_base_54">
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 0</span></div>
+<div class="msg user"><span class="who">user</span><p>Would you be able to convert 20 liters of gasoline into gallons for me? Afterwards, starting the engine to check for smooth operation would be appreciated.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;liter_to_gallon&quot;, &quot;arguments&quot;: {&quot;liter&quot;: 20}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool"><span class="who">tool</span><pre>{&quot;gallon&quot;: 5.283440000000001}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 1</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;startEngine&quot;, &quot;arguments&quot;: {&quot;ignitionMode&quot;: &quot;START&quot;}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool err"><span class="who">tool error</span><pre>{&quot;error&quot;: &quot;All doors must be locked before starting the engine. Here are the unlocked doors: driver, passenger, rear_left, rear_right&quot;}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 2</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>It appears that the doors are not locked before starting the engine. Please lock all doors and try again.</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 1</span></div>
+<div class="msg user"><span class="who">user</span><p>With the engine happily purring, I find myself pondering over the tire pressure now. Might you check that for me? And if you can, share the tire pressure status (with message content &#x27;healthy&#x27; or &#x27;not healthy&#x27;, nothing else) with tag &#x27;#CarMaintenance&#x27; and mention &#x27;@VehicleGuru&#x27;? Healthy is deinfed as all tire pressure between 32 and 35, inclusive.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;check_tire_pressure&quot;, &quot;arguments&quot;: {}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool"><span class="who">tool</span><pre>{&quot;frontLeftTirePressure&quot;: 32.0, &quot;frontRightTirePressure&quot;: 32.0, &quot;rearLeftTirePressure&quot;: 30.0, &quot;rearRightTirePressure&quot;: 30.0, &quot;healthy_tire_pressure&quot;: true, &quot;car_info&quot;: {}}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 1</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>The tire pressure status is &#x27;healthy&#x27;. All tires are within the defined range of 32 to 35 psi. If you have any other requests or need further assistance, feel free to ask!</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 2</span></div>
+<div class="msg user"><span class="who">user</span><p>Wonderful! I&#x27;d really appreciate it if you could assist in retweeting that fantastic post about tire maintenance.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>Could you please provide the tweet ID that you want to retweet? This will help me proceed with the action.</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+</div>
+<div class="tx" id="tx-multi_turn_base_65" role="tabpanel" aria-labelledby="tab-multi_turn_base_65">
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 0</span></div>
+<div class="msg user"><span class="who">user</span><p>Imagine I just embarked on a lovely road trip and had to make a stop at the gas station. Would you be so kind as to assist me in filling up my car with 15 liters of gasoline? Fill with the second decimal digit precision in gallon. Once that&#x27;s done, it would be fantastic if you could check the tire pressures as well—I&#x27;d love to share my impressive car maintenance skills with my Twitter followers with the message &#x27;Just filled up the tank and checked the tire pressures. Ready for the next adventure!&#x27;. If you could also start up the engine and let me know the battery voltage and fuel level, that would be incredibly helpful.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;liter_to_gallon&quot;, &quot;arguments&quot;: {&quot;liter&quot;: 15.0}}
+&lt;/tool_call&gt;
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;fillFuelTank&quot;, &quot;arguments&quot;: {&quot;fuelAmount&quot;: 15.0}}
+&lt;/tool_call&gt;
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;check_tire_pressure&quot;, &quot;arguments&quot;: {}}
+&lt;/tool_call&gt;
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;startEngine&quot;, &quot;arguments&quot;: {&quot;ignitionMode&quot;: &quot;START&quot;}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool"><span class="who">tool</span><pre>{&quot;gallon&quot;: 3.9625800000000004}</pre></div>
+<div class="tool"><span class="who">tool</span><pre>{&quot;fuelLevel&quot;: 25.0}</pre></div>
+<div class="tool"><span class="who">tool</span><pre>{&quot;frontLeftTirePressure&quot;: 32.0, &quot;frontRightTirePressure&quot;: 32.0, &quot;rearLeftTirePressure&quot;: 30.0, &quot;rearRightTirePressure&quot;: 30.0, &quot;healthy_tire_pressure&quot;: true, &quot;car_info&quot;: {}}</pre></div>
+<div class="tool err"><span class="who">tool error</span><pre>{&quot;error&quot;: &quot;All doors must be locked before starting the engine. Here are the unlocked doors: driver, passenger, rear_left, rear_right&quot;}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 1</span><div class="sbody">
+<div class="msg calls"><span class="who">model</span><pre>&lt;tool_call&gt;
+{&quot;name&quot;: &quot;setHeadlights&quot;, &quot;arguments&quot;: {&quot;mode&quot;: &quot;on&quot;}}
+&lt;/tool_call&gt;</pre></div>
+<div class="tool"><span class="who">tool</span><pre>{&quot;headlightStatus&quot;: &quot;on&quot;}</pre></div>
+</div></div>
+<div class="step"><span class="snum">step 2</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>Here&#x27;s the information you need for your tweet:
+
+- You just filled up the tank with 3.96 gallons of gasoline.
+- The tire pressures are as follows:
+  - Front left tire pressure: 32.0 psi
+  - Front right tire pressure: 32.0 psi
+  - Rear left tire pressure: 30.0 psi
+  - Rear right tire pressure: 30.0 psi
+  - All tire pressures are healthy.
+- The battery voltage is 12.0 volts, and the fuel level is 25.0 gallons.
+- All doors must be locked before starting the engine. Here are the unlocked doors: driver, passenger, rear_left, rear_right.
+- The headlights are currently on.
+
+You can share this detailed information with your followers to show off your thorough car maintenance skills!</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+<div class="turn">
+<div class="turn-h"><span class="tnum">turn 1</span></div>
+<div class="msg user"><span class="who">user</span><p>I&#x27;ve shared the details about my tire pressures and engine&#x27;s stellar condition on Twitter, but I&#x27;d like to give that tweet a bit more visibility. Could you possibly amplify its reach by retweeting it? And if you could add a comment saying, &#x27;Ready for the next adventure!&#x27; that would be splendid.</p></div>
+<div class="step"><span class="snum">step 0</span><div class="sbody">
+<div class="msg prose"><span class="who">model</span><p>To proceed with retweeting your tweet and adding a comment, I would need the specific tweet ID and the content of your tweet. Could you please provide these details?</p></div>
+<div class="note">Empty response from the model. Proceed to next turn.</div>
+</div></div>
+</div>
+</div>
+<div class="callout warn">
+<p><strong>Read <code>base_65</code> carefully.</strong> It counts as a “recovery” in my statistics — a call did follow the error — but the call is <code>setHeadlights</code>, which has nothing to do with the locked doors that blocked the engine. The true recovery rate is lower than the 16–20% below; some fraction of those retries are just the model moving on.</p>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Aggregate</p>
+<h2>The pattern holds across all four categories</h2>
+<div class="tblwrap">
+<table>
+<thead><tr>
+<th>Category</th><th>Score</th><th>Turns</th><th>With calls</th><th>Prose only</th>
+<th>Tool calls</th><th>Tool errors</th><th>Retried after error</th>
+</tr></thead>
+<tbody>
+<tr><td>multi_turn_base</td><td class="acc">1.50%</td><td>734</td><td>454 (62%)</td><td>280 (38%)</td><td>610</td><td>161</td><td>25 / 154 (16%)</td></tr>
+<tr><td>multi_turn_miss_func</td><td class="acc">2.00%</td><td>930</td><td>543 (58%)</td><td>387 (42%)</td><td>712</td><td>181</td><td>28 / 173 (16%)</td></tr>
+<tr><td>multi_turn_miss_param</td><td class="acc">2.50%</td><td>934</td><td>458 (49%)</td><td>476 (51%)</td><td>594</td><td>153</td><td>26 / 146 (18%)</td></tr>
+<tr><td>multi_turn_long_context</td><td class="acc">2.00%</td><td>667</td><td>432 (65%)</td><td>235 (35%)</td><td>577</td><td>156</td><td>30 / 152 (20%)</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout">
+<p><strong>Two caveats on these numbers.</strong> In <code>multi_turn_miss_param</code>, asking the user for a missing parameter is the <em>correct</em> behaviour, so part of that 51% prose rate is right — yet the category still scores 2.50%, meaning the questions are landing in the wrong turns or the wrong form.</p>
+<p>Separately, <strong>19 entries never ran</strong>: 18 in <code>long_context</code> hit the 32,768-token limit (one request reached 36,155), and one crashed on a <code>'name'</code> KeyError. That is a harness ceiling, not a model failure, and it caps <code>long_context</code> at 91% of its entries.</p>
+</div>
+</section>
+
+<hr class="rule">
+
+<section>
+<p class="eyebrow">Resolved · 22-checkpoint suite</p>
+<h2>The control came back: never added, not removed</h2>
+<p>This page originally ended on an open question — whether the fine-tune <em>removed</em> multi-turn ability or never installed it. We since ran all 22 checkpoints, and the answer is unambiguous.</p>
+
+<div class="tblwrap" style="margin:18px 0 6px">
+<table>
+<thead><tr><th>Model</th><th>Multi-turn</th><th>Non-live</th><th>What it settles</th></tr></thead>
+<tbody>
+<tr><td>Base, lenient parse</td><td class="acc">1.38%</td><td>58.67%</td><td>the untrained floor</td></tr>
+<tr><td>SFT no-reason, epoch 1</td><td class="acc">1.25%</td><td>87.21%</td><td><em>below</em> the floor</td></tr>
+<tr><td>SFT no-reason, best of 10 epochs</td><td class="acc">3.25%</td><td>85.81%</td><td>ten epochs bought ~2 points</td></tr>
+<tr><td>Qwen3-4B Instruct, same size</td><td class="acc" style="color:var(--ok)">31.75%</td><td>87.23%</td><td>reachable at 4B</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Nothing was removed — the base model was already at the floor. And nothing was added: ten epochs of tool-calling data moved multi-turn from 1.38% to at best 3.25%, while a same-architecture, same-parameter-count instruct model reaches <strong>31.75%</strong> on the identical test. The ceiling is the corpus, not the model.</p>
+
+<div class="callout warn">
+<p><strong>One correction to this page's framing.</strong> The 83% single-turn figure above was measured against a base model that appeared to score <strong>0%</strong>. That 0 turned out to be a parser artifact: the base emits well-formed <code>{"name": …, "arguments": …}</code> objects but never the <code>&lt;tool_call&gt;</code> wrapper, so nothing parsed. Re-scoring the <em>same</em> generations leniently puts it at <strong>58.67%</strong> non-live.</p>
+<p>So the single-turn gain is real but far smaller than it looked — roughly +28 points, not +83. That makes the contrast on this page sharper rather than weaker: the fine-tune moved single-turn work by 28 points and multi-turn by essentially zero.</p>
+</div>
+
+<p style="margin-top:1.2rem">The remaining check is still the corpus one, and still cheap: how many <code>toolace-tooling-sft</code> conversations have more than one assistant turn, and how many contain a tool response carrying an error the next assistant turn must act on. Every behaviour catalogued on this page — the 16–20% error-recovery rate, prose as a hard stop, no state across turns, asking instead of looking — is what a model trained only on single exchanges would do.</p>
+</section>
+
+<footer>
+Generated from <code>result/qwen3-4b-sft-noreason-128-FC/multi_turn/</code> · 5,017 entries, 20 categories, ~9 min on one A100-40GB · vLLM 0.8.5 · web_search excluded (free-tier SerpAPI quota)
+</footer>
+</div>
+
+<script>
+(function(){
+  var tabs=[].slice.call(document.querySelectorAll('.tab'));
+  var panels=[].slice.call(document.querySelectorAll('.tx'));
+  function show(id){
+    tabs.forEach(function(t){
+      var on=t.dataset.t===id;
+      t.classList.toggle('on',on); t.setAttribute('aria-selected',on?'true':'false');
+    });
+    panels.forEach(function(p){p.classList.toggle('on',p.id==='tx-'+id);});
+  }
+  tabs.forEach(function(t){t.addEventListener('click',function(){show(t.dataset.t);});});
+  if(tabs.length) show(tabs[0].dataset.t);
+})();
+</script>
