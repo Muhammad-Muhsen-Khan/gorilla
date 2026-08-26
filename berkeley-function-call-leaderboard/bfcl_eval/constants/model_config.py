@@ -2230,10 +2230,17 @@ third_party_inference_model_map = {
 }
 
 
+# Locally-registered checkpoints for the Qwen3-4B tooling-SFT experiment.
+# Kept in a separate module so upstream pulls of this file stay conflict-free.
+from bfcl_eval.constants.custom_model_config import (  # noqa: E402
+    _build as _build_custom_model_map,
+)
+
 MODEL_CONFIG_MAPPING = {
     **api_inference_model_map,
     **local_inference_model_map,
     **third_party_inference_model_map,
+    **_build_custom_model_map(),
 }
 
 # Uncomment to get the supported_models.py file contents
