@@ -37,6 +37,17 @@ not needed. Keys look like `qwen3-4b-sft-noreason-448-FC`. Variants: `-FC`
 (leaderboard-comparable), `-FC-nativefmt` (registered but unused), and a bare
 prompt-mode name.
 
+`-FC-keepreason` was added later: it pins `last_query_index = -1` so every
+assistant turn's `<think>` reaches the prompt. Use it only for corpora that
+reason on every turn (Nemotron, Mega). ToolMind and the prefix corpus are
+reasoning-free in context by construction and run plain `-FC`.
+
+`analysis/verify_official_qwen_template.py` proves plain `-FC` is not merely
+"close to" official Qwen3: it renders the `chat_template` field out of
+`Qwen/Qwen3-4B`'s own tokenizer_config.json with Jinja and diffs it against
+`QwenFCHandler._format_prompt` across four conversation shapes. All four are
+byte-identical. Re-run it after any handler change.
+
 ## Results on disk
 
 | Path | Size | Contents |
@@ -110,8 +121,11 @@ them. See `analysis/README.md`.
 
 ## Git
 
-`origin` is upstream `ShishirPatil/gorilla` — **do not push there**.
-`fork` is `Muhammad-Muhsen-Khan/gorilla`. Work lands on branches of `fork`.
+`origin` is `Muhammad-Muhsen-Khan/gorilla` (the fork) and it is the only remote
+configured in this checkout; work lands on branches of it. Upstream
+`ShishirPatil/gorilla` is NOT wired up here — if you add it, add it under a
+different name and never push to it. Verify with `git remote -v` before pushing
+rather than trusting this paragraph.
 
 The SerpAPI key lives in `berkeley-function-call-leaderboard/.env`, which is
 gitignored (`.gitignore:29`). Keep it out of committed files and out of logs.
