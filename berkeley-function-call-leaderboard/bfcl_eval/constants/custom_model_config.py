@@ -46,6 +46,122 @@ class QwenFCNativeToolsHandler(QwenFCHandler):
         return super()._format_prompt(messages, [_to_openai_tool(f) for f in function])
 
 
+class QwenFCKeepReasonHandler(QwenFCHandler):
+    """QwenFCHandler that keeps the <think> block of EVERY assistant turn in context.
+
+    Upstream `QwenFCHandler` faithfully reproduces Qwen3's official *inference*
+    policy: `last_query_index` is the index of the most recent genuine user
+    message, and reasoning is re-emitted only for assistant turns after it.
+    Everything earlier renders as bare content. Verified 2026-09-01: across two
+    user turns, only the current turn's <think> survives.
+
+    That is correct for stock Qwen3, and wrong for a model fine-tuned on a corpus
+    that reasons on every assistant turn (Nemotron tool_calling: 1,422,336 of
+    1,422,358 turns). Under `chat_template_tooling.jinja` training always showed
+    reasoned history; under the upstream handler evaluation shows bare history
+    for everything before the last user message. This class removes that skew.
+
+    The method below is a mechanical copy of QwenFCHandler._format_prompt with a
+    single substitution -- see the comment at `last_query_index`. Not
+    leaderboard-comparable (the published Qwen3 rows all ran the upstream
+    policy); run it against the `-FC` rows to measure what the reasoning is worth.
+    """
+
+    @override
+    def _format_prompt(self, messages, function):
+        formatted_prompt = ""
+
+        if len(function) > 0:
+            formatted_prompt += "<|im_start|>system\n"
+            if messages[0]["role"] == "system":
+                formatted_prompt += messages[0]["content"] + "\n\n"
+
+            formatted_prompt += "# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>"
+            for tool in function:
+                formatted_prompt += f"\n{json.dumps(tool)}"
+            formatted_prompt += '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call><|im_end|>\n'
+
+        else:
+            if messages[0]["role"] == "system":
+                formatted_prompt += (
+                    f"<|im_start|>system\n{messages[0]['content']}<|im_end|>\n"
+                )
+
+        # THE ONLY CHANGE vs QwenFCHandler: upstream scans backwards for the last real
+        # user message and strips reasoning from every assistant turn at or before it.
+        # Pinning the cutoff to -1 makes `idx > last_query_index` true for EVERY
+        # assistant turn, so every <think> block is rendered into the prompt.
+        last_query_index = -1
+
+        for idx, message in enumerate(messages):
+            role = message["role"]
+            content = message["content"]
+
+            if role == "user" or (role == "system" and idx != 0):
+                formatted_prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+
+            elif role == "assistant":
+                reasoning_content = ""
+                if "reasoning_content" in message and message["reasoning_content"]:
+                    reasoning_content = message["reasoning_content"]
+
+                elif "</think>" in content:
+                    parts = content.split("</think>")
+                    reasoning_content = (
+                        parts[0].rstrip("\n").split("<think>")[-1].lstrip("\n")
+                    )
+                    content = parts[-1].lstrip("\n")
+
+                if idx > last_query_index:
+                    if idx == len(messages) - 1 or reasoning_content:
+                        formatted_prompt += (
+                            f"<|im_start|>{role}\n<think>\n"
+                            + reasoning_content.strip("\n")
+                            + f"\n</think>\n\n"
+                            + content.lstrip("\n")
+                        )
+                    else:
+                        formatted_prompt += f"<|im_start|>{role}\n{content}"
+                else:
+                    formatted_prompt += f"<|im_start|>{role}\n{content}"
+
+                if "tool_calls" in message:
+                    for tool_call in message["tool_calls"]:
+                        if (tool_call == message["tool_calls"][0] and content) or tool_call != message["tool_calls"][0]:
+                            formatted_prompt += "\n"
+
+                        if "function" in tool_call:
+                            tool_call = tool_call["function"]
+
+                        formatted_prompt += '<tool_call>\n{"name": "'
+                        formatted_prompt += tool_call["name"]
+                        formatted_prompt += '", "arguments": '
+
+                        if isinstance(tool_call["arguments"], str):
+                            formatted_prompt += tool_call["arguments"]
+                        else:
+                            formatted_prompt += json.dumps(tool_call["arguments"])
+
+                        formatted_prompt += "}\n</tool_call>"
+
+                formatted_prompt += "<|im_end|>\n"
+
+            elif role == "tool":
+                prev_role = messages[idx - 1]["role"] if idx > 0 else None
+                next_role = messages[idx + 1]["role"] if idx < len(messages) - 1 else None
+
+                if idx == 0 or prev_role != "tool":
+                    formatted_prompt += "<|im_start|>user"
+
+                formatted_prompt += f"\n<tool_response>\n{content}\n</tool_response>"
+
+                if idx == len(messages) - 1 or next_role != "tool":
+                    formatted_prompt += "<|im_end|>\n"
+
+        formatted_prompt += "<|im_start|>assistant\n"
+        return formatted_prompt
+
+
 def _to_openai_tool(func_doc: dict) -> dict:
     """Flat BFCL func doc -> OpenAI-style tool object, with dict->object types."""
     return {
@@ -100,10 +216,88 @@ for _run, (_per_epoch, _tmpl, _label) in _RUNS.items():
             f"Qwen3-4B-Base SFT {_label} epoch {_epoch} (ckpt-{_step})",
         )
 
+# ---------------------------------------------------------------------------
+# ToolMind graphsyn SFT (2026-08-31). 3 epochs, per-device batch 4 on 8x A100,
+# 916 steps/epoch, so ckpt-916/-1832/-2748 are epochs 1/2/3. The run's `final/`
+# save is byte-identical to checkpoint-2748 (same md5), so there are only three
+# distinct models. Trained under chat_template_toolmind.jinja, which supervises
+# only the final assistant turn -- see llm-pretrainer README.
+# Paths are absolute on this box; the /home/ubuntu paths above are from the
+# machine the first 22-checkpoint suite ran on and do not resolve here.
+# ---------------------------------------------------------------------------
+_TOOLMIND = "/workspace/toolmind/models-sft/Qwen3-4B-Base-sft-%d"
+for _epoch, _step in enumerate((916, 1832, 2748), start=1):
+    _CHECKPOINTS[f"qwen3-4b-sft-toolmind-{_step}"] = (
+        _TOOLMIND % _step,
+        f"Qwen3-4B-Base SFT toolmind epoch {_epoch} (ckpt-{_step})",
+    )
+
+# ---------------------------------------------------------------------------
+# Nemotron tool_calling SFT (2026-09-01). ONE epoch, per-device batch 4 on 8x
+# A100, 2,941 steps, 1.533 B tokens. Trained under chat_template_tooling.jinja,
+# which supervises EVERY assistant turn including its <think> block -- unlike
+# ToolMind, which supervises only the last. `final/` is byte-identical to
+# checkpoint-2941 (same md5), so only three distinct models exist.
+# Because this corpus reasons on every turn, the `-FC-keepreason` variant is the
+# faithful evaluation; plain `-FC` measures it under Qwen3's stripping policy.
+# ---------------------------------------------------------------------------
+_NEMOTRON = "/workspace/nemotron/models-sft/Qwen3-4B-Base-sft-%d"
+for _step in (2000, 2500, 2941):
+    _CHECKPOINTS[f"qwen3-4b-sft-nemotron-{_step}"] = (
+        _NEMOTRON % _step,
+        f"Qwen3-4B-Base SFT nemotron epoch 1 (ckpt-{_step})",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mega = toolmind-graphsyn + nemotron-tooling, concatenated and shuffled
+# (seed 42), 470,387 rows, one epoch = 3,850 steps, train_loss 0.6288.
+# Trained with chat_template_mega.jinja, which supervises every assistant turn
+# whose <think> is non-empty -- "every turn" on nemotron rows, "the last turn"
+# on toolmind rows. `final/` and `checkpoint-3850` are the same weights (both
+# 8044982080 bytes), so only three distinct models exist.
+# The corpus mixes per-turn and last-turn reasoning, so BOTH variants are
+# informative: `-FC` under Qwen3's stripping policy, `-FC-keepreason` with the
+# reasoning kept in context.
+# ---------------------------------------------------------------------------
+_MEGA = "/workspace/mega/models-sft/Qwen3-4B-Base-sft-%d"
+for _step in (3000, 3500, 3850):
+    _CHECKPOINTS[f"qwen3-4b-sft-mega-{_step}"] = (
+        _MEGA % _step,
+        f"Qwen3-4B-Base SFT mega epoch 1 (ckpt-{_step})",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prefix = nemotron-tooling-prefix-sft (2026-09-03/04). Prefix-expanded cut of
+# nemotron-tooling: every assistant turn of a source conversation becomes its
+# own row, truncated at that turn, with <think> STRIPPED from every context
+# turn and kept only on the final target turn (measured: 31.5% of assistant
+# turns carry a non-empty <think>, and that count equals the row count exactly).
+# 1,412,753 rows, one epoch = 6,493 steps, per-device batch 4 on 8x A100,
+# max_length 16384, trained under chat_template_toolmind.jinja (supervises the
+# last assistant turn only).
+#
+# Because the corpus is reasoning-free in context by construction, the FAITHFUL
+# evaluation is plain `-FC` -- upstream QwenFCHandler, i.e. Qwen3's official
+# inference policy, which strips <think> from every assistant turn at or before
+# the last real user message. This is the same handler the ToolMind checkpoints
+# were scored under. `-FC-keepreason` is NOT the right variant here: it would
+# feed reasoned history the model never saw in training.
+# ---------------------------------------------------------------------------
+_PREFIX = "/workspace/prefix/models-sft/Qwen3-4B-Base-sft-%d"
+for _step in (1400, 2800, 4200, 5600, 6493):
+    _CHECKPOINTS[f"qwen3-4b-sft-prefix-{_step}"] = (
+        _PREFIX % _step,
+        f"Qwen3-4B-Base SFT prefix epoch 1 (ckpt-{_step})",
+    )
+
+
 _VARIANTS = [
     # registry suffix, handler,                   is_fc_model, display suffix
     ("-FC", QwenFCHandler, True, " (FC)"),
-    ("-FC-nativefmt", QwenFCNativeToolsHandler, True, " (FC, native tool fmt)"),
+    ("-FC-nativefmt", QwenFCNativeToolsHandler, True, " (FC nativefmt)"),
+    ("-FC-keepreason", QwenFCKeepReasonHandler, True, " (FC keepreason)"),
     ("", QwenHandler, False, " (Prompt)"),
 ]
 
