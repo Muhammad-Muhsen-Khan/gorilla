@@ -293,6 +293,70 @@ for _step in (1400, 2800, 4200, 5600, 6493):
     )
 
 
+# ---------------------------------------------------------------------------
+# GRPO RL on nemotron_pivot (2026-09-06), starting FROM mega ckpt-3850 -- the
+# highest scorer of the SFT suite at 35.82% Overall under FC keepreason.
+# Run: rl_scripts/nemotron_pivot_grpo_judge.sh in the verl repo. Reward =
+# binary LLM judge (minimax-m3) on prose-GT rows + smooth [-1,1] argument-level
+# score on tool-GT rows. Checkpoints merged from FSDP with
+# `python -m verl.model_merger merge --backend fsdp`.
+#
+# step 50  : before tool-call spraying took hold (mean 0.97 calls/response at
+#            train step 25, ~2 by step 41). Held-out tool accuracy 0.209 -> 0.498.
+# step 100 : after spraying (mean ~4.2 calls/response, single-call responses
+#            0.5%). Reported accuracy keeps rising but first-call accuracy is
+#            flat, so this checkpoint tests whether the spray hurts BFCL.
+#
+# The SFT starting point is re-registered here under its LOCAL path: the
+# _MEGA entry above points at /workspace/mega/... from the training box, which
+# does not resolve on this machine.
+#
+# All three carry chat_template_tooling.jinja (verified identical), which
+# supervises every assistant turn's <think> -- so `-FC-keepreason` is the
+# faithful variant, matching how the RL run itself rendered prompts.
+# ---------------------------------------------------------------------------
+_VERL = "/home/ubuntu/verl/models"
+_CHECKPOINTS["qwen3-4b-rl-sft-base-3850"] = (
+    f"{_VERL}/Qwen3-4B-Base-sft-3850",
+    "Qwen3-4B-Base SFT mega ckpt-3850 (RL start point)",
+)
+_CHECKPOINTS["qwen3-4b-rl-judge-50"] = (
+    f"{_VERL}/rl-judge-step50",
+    "Qwen3-4B-Base SFT mega-3850 + GRPO judge (step 50)",
+)
+_CHECKPOINTS["qwen3-4b-rl-judge-100"] = (
+    f"{_VERL}/rl-judge-step100",
+    "Qwen3-4B-Base SFT mega-3850 + GRPO judge (step 100)",
+)
+
+
+# ---------------------------------------------------------------------------
+# GRPO RL v2 on nemotron_pivot (2026-09-07), same start point (mega ckpt-3850).
+# Reward differences vs the "GRPO judge" entries above:
+#   * prose rows: the LLM judge no longer sees the gold reply. It only asks
+#     whether the response is coherent prose addressing the last user message,
+#     i.e. a leniency gate rather than a correctness check.
+#   * tool rows: the emitted call count must EQUAL the ground truth count
+#     (always 1 in this corpus) or the reward is -1 with nothing else examined.
+#     This closed the call-spraying that the v1 run degenerated into.
+#
+# In-domain at step 74: first-call accuracy 0.189 -> 0.364 with 0.89 calls per
+# response (v1 reached 4.24), but prose was answered with a tool call on 92.6%
+# of prose-GT rows, so abstention is expected to be weak.
+#
+# Same chat_template_tooling.jinja as every other entry here, so -FC-keepreason
+# remains the faithful variant.
+# ---------------------------------------------------------------------------
+_CHECKPOINTS["qwen3-4b-rl-v2-50"] = (
+    "/home/ubuntu/verl/models/rl-v2-step50",
+    "Qwen3-4B-Base SFT mega-3850 + GRPO v2 (step 50)",
+)
+_CHECKPOINTS["qwen3-4b-rl-v2-100"] = (
+    "/home/ubuntu/verl/models/rl-v2-step100",
+    "Qwen3-4B-Base SFT mega-3850 + GRPO v2 (step 100)",
+)
+
+
 _VARIANTS = [
     # registry suffix, handler,                   is_fc_model, display suffix
     ("-FC", QwenFCHandler, True, " (FC)"),
