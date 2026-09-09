@@ -15,9 +15,10 @@ assets (Google Fonts aside), so opening it in a browser is enough.
 ## Tables
 
 The HTML pages came first and cover the original 22-checkpoint suite. The tables
-below are the living record and now carry 34 rows — the four tooling corpora
-(ToolACE, ToolMind graphsyn, Nemotron flat, Nemotron prefix), the Mega mix, and
-the Instruct/base reference points.
+below are the living record and now carry 39 rows — the four tooling corpora
+(ToolACE, ToolMind graphsyn, Nemotron flat, Nemotron prefix), the Mega mix, the
+Instruct/base reference points, and five GRPO RL checkpoints trained in the
+sibling verl repo on top of Mega ckpt-3850.
 
 | File | What it is |
 |---|---|
@@ -41,6 +42,45 @@ endings. Re-running it when there is nothing new is a no-op.
 
 `bfcl_best_per_corpus.tsv` has a note column that cannot be derived from the
 scores, so it is maintained by hand.
+
+`meta()` derives the Corpus/Epoch/Ckpt columns from the display name. RL rows
+carry `rl-<reward>` as the corpus and `step-<n>` as the checkpoint; Epoch is
+left blank, because an RL step is not an epoch.
+
+## The RL rows
+
+Five rows come from GRPO runs in the verl repo, all starting from Mega
+ckpt-3850 and all evaluated FC keepreason with a 4096-token output cap.
+
+| Row | Overall | NonLive AST | Live | MultiTurn | Memory |
+|---|---:|---:|---:|---:|---:|
+| Mega ckpt-3850 (RL start point) | 34.41 | 83.29 | 78.46 | 22.62 | 17.20 |
+| + GRPO judge v1 step 50 | 17.28 | 79.77 | 58.33 | 0.88 | 2.58 |
+| + GRPO judge v1 step 100 | 12.36 | 60.69 | 13.32 | 0.12 | 3.66 |
+| + GRPO judge v2 step 50 | 31.86 | 69.79 | 77.28 | 16.12 | 20.86 |
+| + GRPO judge v2 step 100 | 33.97 | 73.81 | 79.20 | 21.62 | 23.87 |
+
+**v1 is a reward-hacking artifact, not a training curve.** Its reward scored a
+tool response correct if any emitted call matched, with no cost for surplus
+calls, so the policy learned to spray: mean calls per response went 0.53 to
+4.24. MultiTurn collapses to 0.88 and then 0.12 because BFCL grades multi-turn
+on final API state, and a sprayed call mutates state irrecoverably.
+
+**v2 replaced that with a hard gate** — wrong call count scores -1 outright.
+That killed the spray and recovered MultiTurn to 21.62, but priced "4 of 5
+calls correct" identically to prose, leaving no gradient on multi-call rows.
+The cost is visible in the per-category numbers: `parallel_multiple` 86.00 to
+57.00 and `parallel` 86.50 to 82.00 against the start point, which is nearly
+the whole 9.5-point NonLive AST regression. Memory moved the other way, 17.20
+to 23.87, driven by memory_kv 5.16 to 19.35 — nothing was optimising for it.
+
+**Two evals of the same weights differ by 1.41 Overall.** `SFT mega epoch 1
+(ckpt-3850) (FC keepreason)` and `SFT mega ckpt-3850 (RL start point)` are the
+same checkpoint under two paths, scored 35.82 and 34.41. Most of the gap is
+Memory (23.23 vs 17.20), which contributes 1.21 of it through the 0.40 Agentic
+weight. Treat sub-1.5-point Overall differences between separate runs as noise,
+and compare RL checkpoints against the RL start point row rather than the
+older one.
 
 ## Verifying the eval policy
 

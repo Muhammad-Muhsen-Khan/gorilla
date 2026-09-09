@@ -55,6 +55,13 @@ def meta(name):
     m = re.search(r"SFT ([\w-]+) epoch (\d+) \(ckpt-(\d+)\)", name)
     if m:
         return m.group(1).replace("no-reason", "noreason"), m.group(2), m.group(3)
+    # GRPO RL runs, all starting from mega ckpt-3850. Corpus names the reward,
+    # Ckpt the RL step; Epoch stays blank because RL steps are not epochs.
+    m = re.search(r"GRPO (judge|v2|v3) \(step (\d+)\)", name)
+    if m:
+        return "rl-" + m.group(1), "", "step-" + m.group(2)
+    if "RL start point" in name:
+        return "mega", "1", "3850"
     if "Instruct" in name:
         return "instruct", "", ""
     if "lenient" in name:

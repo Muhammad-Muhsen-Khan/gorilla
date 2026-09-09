@@ -42,6 +42,22 @@ assistant turn's `<think>` reaches the prompt. Use it only for corpora that
 reason on every turn (Nemotron, Mega). ToolMind and the prefix corpus are
 reasoning-free in context by construction and run plain `-FC`.
 
+RL checkpoints from the sibling verl repo are registered the same way, keyed
+`qwen3-4b-rl-{judge,v2}-{50,100}` plus `qwen3-4b-rl-sft-base-3850` for the
+start point, all pointing at `/home/ubuntu/verl/models/`. Two traps when
+serving them:
+
+- `--served-model-name` must be the **host checkpoint path**, not a short
+  alias. BFCL sends `model=self.model_path_or_id`, so a short name 404s.
+- `generation_config.json`'s `max_new_tokens` is a **server-wide output cap**
+  that silently overrides the per-request `max_tokens`. The shipped value of
+  2048 truncated a whole sweep at `finish_reason=length`; pass
+  `--override-generation-config '{"max_new_tokens": 4096}'`.
+
+`runlogs/rl_eval/run.sh` encodes both. Results are in
+`analysis/all_bfcl_results.tsv` (corpus `rl-*`), with the reward-design context
+in `analysis/README.md`.
+
 `analysis/verify_official_qwen_template.py` proves plain `-FC` is not merely
 "close to" official Qwen3: it renders the `chat_template` field out of
 `Qwen/Qwen3-4B`'s own tokenizer_config.json with Jinja and diffs it against
