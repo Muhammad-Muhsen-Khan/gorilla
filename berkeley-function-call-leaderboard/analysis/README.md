@@ -82,6 +82,43 @@ weight. Treat sub-1.5-point Overall differences between separate runs as noise,
 and compare RL checkpoints against the RL start point row rather than the
 older one.
 
+## The nemotron-32k rows (abdelrahman-qwen)
+
+Three checkpoints of a second Nemotron tool_calling SFT, run on hgx19
+(8x H200) and started from `models/abdelrahman-qwen` rather than
+Qwen3-4B-Base. One epoch of 737 steps, per-device batch 8 with
+32,768-token packed sequences. Trained with `chat_template_tooling.jinja`
+(every turn supervised) and evaluated FC keepreason. `final/` is
+byte-identical to checkpoint-737.
+
+| Row | Overall | NonLive AST | Live | MultiTurn | MT LongCtx | Memory |
+|---|---:|---:|---:|---:|---:|---:|
+| Old Nemotron ckpt-2941 (Qwen3-4B-Base, 16k) | 34.03 | 81.60 | 76.24 | 21.25 | 12.00 | 17.42 |
+| nemotron-32k ckpt-500 | 34.07 | 80.25 | 75.80 | 21.12 | 13.00 | 18.92 |
+| nemotron-32k ckpt-625 | 33.54 | 80.83 | 76.61 | 19.50 | 10.50 | 17.85 |
+| nemotron-32k ckpt-737 | 34.09 | 80.12 | 76.46 | 21.50 | 14.00 | 18.06 |
+
+**No gain from the new base, longer sequences or larger batch.** All three
+checkpoints fall within 0.55 Overall of each other and of the old ckpt-2941.
+That is inside the 1.41-point noise between two evals of the same weights (see
+above), so step 500 had already reached the plateau. NonLive AST comes out about
+1 point lower. ckpt-737 is the nominal best and was copied to
+`/local/muhsen/verl/models/Qwen3-4B-Base-sft-737` for RL. Its registered path
+under `models-sft/` no longer exists.
+
+**The context window was raised to 40,960, and some prompts still exceed it.**
+Keepreason puts every turn's `<think>` into the prompt, so long multi-turn
+prompts grow past 32k. `max_position_embeddings` was raised from 32,768 to
+40,960 in each converted `config.json`, the value official Qwen3-4B ships. The
+server used the same `--max-model-len`. Each model still logged 31–35 HTTP 400
+context overflows, about 30 of them in `multi_turn_long_context`. The largest
+prompt reached 56k tokens. The old keepreason runs at 32,768 logged about 89 per
+model. An overflowed entry is scored as a failure, so MT LongCtx for every
+keepreason row is partly a context-limit measurement.
+
+These three rows are not yet in `all_bfcl_results.tsv`. Their scores are in
+`score/data_overall.csv`, and run logs are in `../runlogs/nemotron32k/`.
+
 ## Verifying the eval policy
 
 `verify_official_qwen_template.py` answers "is the `-FC` variant really what

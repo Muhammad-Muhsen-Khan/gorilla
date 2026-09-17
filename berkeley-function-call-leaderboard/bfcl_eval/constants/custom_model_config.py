@@ -357,6 +357,28 @@ _CHECKPOINTS["qwen3-4b-rl-v2-100"] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Nemotron tool_calling SFT from models/abdelrahman-qwen (2026-09-15/16), on
+# hgx19 (8x H200). ONE epoch, per-device batch 8 x 32768 packed, 737 steps,
+# chat_template_tooling.jinja (every assistant turn supervised, <think> included).
+# Run: llm-pretrainer/run_abdelrahman_nemotron_sft.sh. `final/` is byte-identical
+# to checkpoint-737 (cmp), so only three distinct models exist.
+#
+# Converted with llm-pretrainer/src/sft_checkpoints_to_pt.sh, then
+# max_position_embeddings raised 32768 -> 40960 in each config.json (the value
+# official Qwen3-4B ships, same rope_theta). The handler sizes max_tokens from
+# that field, and keepreason multi-turn prompts carry every turn's reasoning, so
+# 32768 would squeeze or reject the longest long_context prompts.
+# Reasons on every turn, so `-FC-keepreason` is the faithful variant.
+# ---------------------------------------------------------------------------
+_NEM32K = "/local/muhsen/models-sft/abdelrahman-qwen-nemotron-32k-bs8/Qwen3-4B-Base-sft-%d"
+for _step in (500, 625, 737):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-nemotron32k-{_step}"] = (
+        _NEM32K % _step,
+        f"abdelrahman-qwen SFT nemotron-32k epoch 1 (ckpt-{_step})",
+    )
+
+
 _VARIANTS = [
     # registry suffix, handler,                   is_fc_model, display suffix
     ("-FC", QwenFCHandler, True, " (FC)"),

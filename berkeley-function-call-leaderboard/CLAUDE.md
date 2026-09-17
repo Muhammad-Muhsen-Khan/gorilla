@@ -58,6 +58,32 @@ serving them:
 `analysis/all_bfcl_results.tsv` (corpus `rl-*`), with the reward-design context
 in `analysis/README.md`.
 
+### hgx19 (8x H200, `/local/muhsen`)
+
+The `abdelrahman-qwen-sft-nemotron32k-{500,625,737}` rows were evaluated on this
+machine, which had no venv until then. Notes for running here again:
+
+- **Build the venv with `UV_CACHE_DIR=/local/muhsen/tmp/uv-cache bash setup_bfcl_env.sh`.**
+  `/` is nearly full, and the default uv cache lives there.
+- **Convert checkpoints with `llm-pretrainer/src/sft_checkpoints_to_pt.sh <run dir> <out dir>`.**
+  It **moves** `model.safetensors` out of each `checkpoint-*` directory rather
+  than copying it, so the training checkpoints can no longer resume. It also
+  copies the tokenizer and configs from `models/qwen-template`, whose
+  `generation_config.json` carries the 2048 cap described above.
+- **`runlogs/nemotron32k/`** runs one vLLM server per GPU, tp 1 on port
+  `1053+gpu` (`serve.sh`). `eval.sh` waits for the server, runs generate and
+  then evaluate; `bfcl evaluate` is serialised with `flock` because it rewrites
+  the shared `score/data_*.csv`. Everything runs in a tmux session with a
+  `progress.sh` window.
+- **Keepreason needs more than 32k of context.** Raise `max_position_embeddings`
+  to 40960 in the converted `config.json` and pass `--max-model-len 40960`. The
+  handler sizes `max_tokens` from that config field. About 30 of the 200
+  `multi_turn_long_context` entries still overflow; see `analysis/README.md`.
+- **Headroom:** 64 threads used about 6% of an H200's KV cache on single-turn
+  categories. Higher `--num-threads` is safe.
+- **Stale path:** ckpt-737 was later moved to `/local/muhsen/verl/models/`, so
+  its `models-sft/` path in `custom_model_config.py` no longer exists.
+
 `analysis/verify_official_qwen_template.py` proves plain `-FC` is not merely
 "close to" official Qwen3: it renders the `chat_template` field out of
 `Qwen/Qwen3-4B`'s own tokenizer_config.json with Jinja and diffs it against
