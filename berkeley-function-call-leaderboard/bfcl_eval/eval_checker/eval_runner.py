@@ -69,6 +69,20 @@ def _subset_entries_by_model_ids(
     return filtered_prompt_entries, filtered_ground_truth_entries
 
 
+def _decode_kwargs(handler, function):
+    """Pass the tool schema to decoders that ask for it.
+
+    XML tool-call formats (`<parameter=x>5</parameter>`) carry no type
+    information, so the decoder can only return `"5"` unless it can look the
+    parameter up in the schema. Handlers that need it set
+    `WANTS_FUNCTION_SCHEMA`; every other handler keeps its existing signature,
+    so this is a no-op for them.
+    """
+    if getattr(handler, "WANTS_FUNCTION_SCHEMA", False) and function is not None:
+        return {"function": function}
+    return {}
+
+
 def _evaluate_single_agentic_entry(
     handler: BaseHandler,
     index,
@@ -80,6 +94,8 @@ def _evaluate_single_agentic_entry(
 ):
     """Helper method to process a single agentic entry."""
     # Remove the function doc from the score file for better readability
+    # (captured first: some decoders need it to type their arguments)
+    _fn_schema = prompt_entry.get("function")
     if "function" in prompt_entry:
         del prompt_entry["function"]
 
@@ -113,7 +129,9 @@ def _evaluate_single_agentic_entry(
         # model_result_item is per step
         try:
             decoded_result: list[str] = handler.decode_execute(
-                model_result_item, has_tool_call_tag=False
+                model_result_item,
+                has_tool_call_tag=False,
+                **_decode_kwargs(handler, _fn_schema),
             )
             if is_empty_execute_response(decoded_result):
                 last_unsuccessful_decoding_message = model_result_item
@@ -174,6 +192,8 @@ def _evaluate_single_multi_turn_entry(
 ):
     """Helper method to process a single multi-turn entry."""
     # Remove the function doc from the score file for better readability
+    # (captured first: some decoders need it to type their arguments)
+    _fn_schema = prompt_entry.get("function")
     if "function" in prompt_entry:
         del prompt_entry["function"]
 
@@ -223,7 +243,9 @@ def _evaluate_single_multi_turn_entry(
             # model_result_item is per step
             try:
                 decoded_result: list[str] = handler.decode_execute(
-                    model_result_item, has_tool_call_tag=False
+                    model_result_item,
+                    has_tool_call_tag=False,
+                    **_decode_kwargs(handler, _fn_schema),
                 )
                 if is_empty_execute_response(decoded_result):
                     # Empty output is not considered as a valid function call
@@ -275,7 +297,10 @@ def _evaluate_single_relevance_entry(
 
     try:
         decoded_result = handler.decode_ast(
-            model_result_item, language=ReturnFormat.PYTHON, has_tool_call_tag=False
+            model_result_item,
+            language=ReturnFormat.PYTHON,
+            has_tool_call_tag=False,
+            **_decode_kwargs(handler, prompt_entry.get("function")),
         )
         # Decode successfully, which means the model output is in valid function call format
         contain_func_call = True
@@ -334,7 +359,10 @@ def _evaluate_single_ast_entry(
     try:
         model_result_item_raw = model_result_item
         model_result_item = handler.decode_ast(
-            model_result_item, return_format, has_tool_call_tag
+            model_result_item,
+            return_format,
+            has_tool_call_tag,
+            **_decode_kwargs(handler, prompt_function),
         )
     except Exception as e:
         return {

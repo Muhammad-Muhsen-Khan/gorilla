@@ -149,6 +149,9 @@ class OSSHandler(BaseHandler, EnforceOverrides):
                 raise ValueError(
                     "Model does not have a max_position_embeddings attribute or tokenizer.model_max_length attribute. Please set the max_context_length attribute in the corresponding model handler."
                 )
+        # Local override: must match the server's --max-model-len when that exceeds config.json.
+        if os.getenv("BFCL_MAX_CONTEXT_LENGTH"):
+            self.max_context_length = int(os.environ["BFCL_MAX_CONTEXT_LENGTH"])
         print(f"Max context length: {self.max_context_length}")
 
         self._server_process = process = None
@@ -325,13 +328,13 @@ class OSSHandler(BaseHandler, EnforceOverrides):
         # Tokenize the formatted prompt to get token count
         input_token_count = len(self.tokenizer.tokenize(formatted_prompt))
 
-        # Determine the number of tokens to request. Cap it at 4096 if the model has a larger limit.
+        # Determine the number of tokens to request. Cap it at 4096 (or BFCL_MAX_OUTPUT_TOKENS) if the model has a larger limit.
         if self.max_context_length < input_token_count + 2:
             # If the prompt is already at the max length, just request 1000 token, we will get an error anyway
             leftover_tokens_count = 1000
         else:
             leftover_tokens_count = min(
-                4096,
+                int(os.getenv("BFCL_MAX_OUTPUT_TOKENS", "4096")),
                 self.max_context_length - input_token_count - 2,
             )
 

@@ -31,11 +31,43 @@ Two flavours are registered per checkpoint:
 """
 
 import json
+import os
+import re
 
 from overrides import override
 
 from bfcl_eval.model_handler.local_inference.qwen import QwenHandler
 from bfcl_eval.model_handler.local_inference.qwen_fc import QwenFCHandler
+from bfcl_eval.model_handler.local_inference.qwen_xml import (
+    QwenXMLHandler,
+    QwenXMLNoThinkPrefillHandler,
+)
+
+
+def _system_suffix() -> str:
+    """Extra instruction appended AFTER the tool-block system prompt, or "".
+
+    Set BFCL_SYSTEM_SUFFIX to probe how much of a behaviour is a prompt-level
+    habit rather than a trained-in policy. Unset (the default) reproduces the
+    stock prompt byte for byte, so existing rows stay comparable.
+
+    Note this lands *outside* the string the SFT template always ended with
+    (`...</tool_call>` then `<|im_end|>`). A model overfit to that boundary can
+    fall out of tool-calling mode entirely; use _system_prefix() to place the
+    same sentence in the slot a training-time system message occupied.
+    """
+    suffix = os.environ.get("BFCL_SYSTEM_SUFFIX", "").strip()
+    return "\n\n" + suffix if suffix else ""
+
+
+def _system_prefix() -> str:
+    """Instruction placed BEFORE "# Tools", where a system message was trained.
+
+    `chat_template_tooling.jinja` renders messages[0].content followed by a
+    blank line and then the tool block, so this is the in-distribution slot.
+    """
+    prefix = os.environ.get("BFCL_SYSTEM_PREFIX", "").strip()
+    return prefix + "\n\n" if prefix else ""
 
 
 class QwenFCNativeToolsHandler(QwenFCHandler):
@@ -75,11 +107,13 @@ class QwenFCKeepReasonHandler(QwenFCHandler):
             formatted_prompt += "<|im_start|>system\n"
             if messages[0]["role"] == "system":
                 formatted_prompt += messages[0]["content"] + "\n\n"
+            formatted_prompt += _system_prefix()
 
             formatted_prompt += "# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>"
             for tool in function:
                 formatted_prompt += f"\n{json.dumps(tool)}"
-            formatted_prompt += '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call><|im_end|>\n'
+            formatted_prompt += '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call>'
+            formatted_prompt += _system_suffix() + "<|im_end|>\n"
 
         else:
             if messages[0]["role"] == "system":
@@ -379,11 +413,338 @@ for _step in (500, 625, 737):
     )
 
 
+# Same three checkpoints re-evaluated on hgx11 (2026-09-17) with temperature 1.0, a 16384-token
+# output cap and a 65536-token context (runlogs/nemotron32k_t1_16k/). Separate keys so results
+# land in their own result/ dirs: BFCL skips ids already present, so reusing the keys above
+# would silently keep the 4096-token, temperature-0.001 generations.
+# ckpt-737 is served from Qwen3-4B-Base-sft-final, which is byte-identical to checkpoint-737.
+_NEM32K_HGX11 = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-nemotron-32k-bs8/Qwen3-4B-Base-sft-%s"
+for _step, _dir in ((500, "500"), (625, "625"), (737, "final")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-nemotron32k-{_step}-t1-out16k-ctx64k"] = (
+        _NEM32K_HGX11 % _dir,
+        f"abdelrahman-qwen SFT nemotron-32k epoch 1 (ckpt-{_step}, T=1.0, out 16k, ctx 64k)",
+    )
+
+
+# ckpt-737 again on hgx11 (2026-09-17), isolating the output cap: the original
+# near-greedy settings (temperature 0.001, 40960-token context) with only the
+# output cap raised 4096 -> 16384 (runlogs/nemotron32k_t0_16k/).
+# No commas in the display name: bfcl writes score/data_*.csv unquoted, so a
+# comma there shifts every later column (the T=1.0 rows above have this problem).
+_CHECKPOINTS["abdelrahman-qwen-sft-nemotron32k-737-t0-out16k-ctx41k"] = (
+    _NEM32K_HGX11 % "final",
+    "abdelrahman-qwen SFT nemotron-32k epoch 1 (ckpt-737 / T=0.001 / out 16k / ctx 41k)",
+)
+
+
+# GRPO v4 RL checkpoint, step 450, started from nemotron-32k SFT ckpt-737
+# (llm-pretrainer/models/qwen3-4b-rl-v4-sft737-step450). Evaluated on avey-bm-02
+# (2026-09-19) with the original near-greedy settings (temperature 0.001, the
+# 40960 context from its config.json) and a 16384-token output cap, so it compares
+# directly with abdelrahman-qwen-sft-nemotron32k-737-t0-out16k-ctx41k
+# (runlogs/rl_v4_step450_out16k/).
+_CHECKPOINTS["qwen3-4b-rl-v4-sft737-step450-out16k"] = (
+    "/mnt/data01/muhsen/tooling/llm-pretrainer/models/qwen3-4b-rl-v4-sft737-step450",
+    "Qwen3-4B RL v4 from SFT-737 step 450 (T=0.001 / out 16k / ctx 41k)",
+)
+
+
+# Olive tooling SFT from models/abdelrahman-qwen (2026-09-21/22), 3 epochs, 1074
+# steps, batch 8 x 30 GPUs x 32768 packed, chat_template_tooling.jinja (every turn
+# supervised, <think> on every assistant turn -> keepreason). Converted with
+# llm-pretrainer/src/sft_checkpoints_to_pt.sh (weights MOVED out of the training
+# checkpoints). Evaluated on avey-bm-04 with the same settings as the ckpt-737
+# out-16k row: temperature 0.001, 40960 context, 16384-token output cap
+# (runlogs/olive32k_out16k/).
+_OLIVE32K = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-32k-bs8-3ep-30gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((875, "2.44"), (1000, "2.79"), (1074, "3")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-olive32k-{_step}-out16k"] = (
+        _OLIVE32K % _step,
+        f"abdelrahman-qwen SFT olive-32k (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+
+class QwenFCLenientHandler(QwenFCKeepReasonHandler):
+    """QwenFCKeepReasonHandler that tolerates trailing junk after the tool-call JSON.
+
+    olive-32b has no tool-calling prior (its base chat template has no tools
+    block at all), and while learning the syntax it closes the object one brace
+    too many:
+
+        {"name": "math.factorial", "arguments": {"number": 5}}}
+
+    Upstream `_extract_tool_calls` runs json.loads on that, raises, and swallows
+    the error with a bare except -- so a well-formed call with the right name and
+    arguments is reported as no call at all, and every AST category scores ~0 for
+    a reason that has nothing to do with tool-calling ability.
+
+    raw_decode parses the leading JSON value and ignores whatever follows, which
+    repairs exactly this case and nothing else: a body that is malformed *before*
+    its first complete value still fails, as it should. Rows scored with this
+    handler are NOT comparable to the strict rows -- they answer "can the model
+    pick the right call?", not "does the model emit valid JSON?".
+    """
+
+    _DECODER = json.JSONDecoder()
+
+    @staticmethod
+    @override
+    def _extract_tool_calls(input_string):
+        matches = re.findall(r"<tool_call>\n(.*?)\n</tool_call>", input_string, re.DOTALL)
+        result = []
+        for match in matches:
+            body = match.strip()
+            try:
+                result.append(json.loads(body))
+                continue
+            except ValueError:
+                pass
+            try:
+                obj, _ = QwenFCLenientHandler._DECODER.raw_decode(body)
+            except ValueError:
+                continue
+            result.append(obj)
+        return result
+
+
+
+# --- prompt-nudge probe --------------------------------------------------
+# Same weights as the rows above; the only difference is BFCL_SYSTEM_SUFFIX,
+# set by runlogs/parallel_nudge/eval.sh. olive-1074 emits exactly one tool call
+# on 44% of parallel prompts although its own reasoning says it needs several;
+# these rows measure whether one sentence in the system prompt recovers that,
+# i.e. whether the habit is prompt-level or trained in. Run on parallel and
+# parallel_multiple only. Not leaderboard-comparable.
+_CHECKPOINTS["abdelrahman-qwen-sft-olive32k-1074-out16k-nudge"] = (
+    _OLIVE32K % 1074,
+    "abdelrahman-qwen SFT olive-32k (ckpt-1074 / epoch 3 / parallel-call nudge / T=0.001 / out 16k / ctx 41k)",
+)
+_CHECKPOINTS["abdelrahman-qwen-sft-nemotron32k-737-out16k-nudge"] = (
+    _CHECKPOINTS["abdelrahman-qwen-sft-nemotron32k-737-t0-out16k-ctx41k"][0],
+    "abdelrahman-qwen SFT nemotron-32k (ckpt-737 / parallel-call nudge / T=0.001 / out 16k / ctx 41k)",
+)
+
+
+_CHECKPOINTS["abdelrahman-qwen-sft-olive32k-1074-out16k-nudge2"] = (
+    _OLIVE32K % 1074,
+    "abdelrahman-qwen SFT olive-32k (ckpt-1074 / epoch 3 / parallel-call nudge before tools / T=0.001 / out 16k / ctx 41k)",
+)
+_CHECKPOINTS["abdelrahman-qwen-sft-nemotron32k-737-out16k-nudge2"] = (
+    _CHECKPOINTS["abdelrahman-qwen-sft-nemotron32k-737-t0-out16k-ctx41k"][0],
+    "abdelrahman-qwen SFT nemotron-32k (ckpt-737 / parallel-call nudge before tools / T=0.001 / out 16k / ctx 41k)",
+)
+
+
+# Probe C: a neutral system line carrying no instruction about call counts.
+# Both nudges raised olive's terse-register share (44% -> 92% / 71%), so the
+# trigger may be the mere presence of a leading system message -- the shape the
+# olive corpus always had -- rather than what it says. This row separates the two.
+_CHECKPOINTS["abdelrahman-qwen-sft-olive32k-1074-out16k-neutral"] = (
+    _OLIVE32K % 1074,
+    "abdelrahman-qwen SFT olive-32k (ckpt-1074 / epoch 3 / neutral system line / T=0.001 / out 16k / ctx 41k)",
+)
+
+
+# pass@8 sampling rows: seven independent T=1.0 draws of the same weights as
+# the scored ckpt-1074 row, live + non-live only. Separate registry keys so each
+# draw lands in its own result/ and score/ directory; runlogs/olive_pass8/.
+for _s in range(1, 8):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-olive32k-1074-t1-s{_s}"] = (
+        _OLIVE32K % 1074,
+        f"abdelrahman-qwen SFT olive-32k (ckpt-1074 / epoch 3 / T=1.0 sample {_s} / out 16k / ctx 41k)",
+    )
+
+
+# GRPO RL on top of the olive SFT ckpt-1074 (verl run grpo_olive_rl300k_olivesft1074,
+# dataset rl-data/olive_rl300k). FSDP shards merged to HF format with
+# `python -m verl.model_merger merge --backend fsdp` inside the verlai/verl image,
+# run as our own uid so the root-owned training checkpoints stay unwritable.
+# Step 50 was pruned by max_actor_ckpt_to_keep=2 before the run was restarted at
+# 11:51 on 2026-09-24 with max_actor_ckpt_to_keep=null; every step from 100 on is kept.
+# Same eval settings as the olive SFT rows: T=0.001, ctx 40960, 16384-token output.
+_GRPO_OLIVE = "/mnt/data01/muhsen/tooling/models-sft/grpo-olive-rl300k-olivesft1074/global_step_%d"
+for _step in (100, 150, 200, 250, 300, 350):
+    _CHECKPOINTS[f"grpo-olive-rl300k-sft1074-step{_step}-out16k"] = (
+        _GRPO_OLIVE % _step,
+        f"GRPO olive-rl300k on olive SFT ckpt-1074 (step {_step} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# olive-32b SFT on the same olive-tooling-sft corpus as the 4B rows above, so the
+# two are a clean 4B-vs-32B comparison. The checkpoints already hold consolidated
+# HF safetensors; they were copied (never moved) out of the LIVE training run and
+# given the base model's tokenizer files, whose vocab/merges/added tokens are
+# byte-identical to the trainer's.
+#
+# Two differences from the 4B rows that the serve script has to cancel out:
+#   * this generation_config sets do_sample/top_k 20/top_p 0.8/repetition_penalty
+#     1.05, none of which applied to the 4B runs -- vLLM would apply them server
+#     wide and make the numbers incomparable.
+#   * max_position_embeddings is already 131072, so no --hf-overrides is needed;
+#     --max-model-len 40960 alone matches the 4B context.
+_OLIVE32B = "/mnt/data01/muhsen/tooling/models-sft/olive-32b-olive-tooling-32k-bs3-3ep-30gpu/checkpoint-%d"
+for _step, _epoch in ((477, "0.50"), (954, "1.00"), (1431, "1.50"),
+                      (1908, "1.99"), (2385, "2.49")):
+    _CHECKPOINTS[f"olive32b-olive-tooling-{_step}-out16k"] = (
+        _OLIVE32B % _step,
+        f"olive-32b SFT olive-tooling (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# abdelrahman-qwen 4B SFT on the olive-tooling *length-bias* remix
+# (llm-pretrainer/sft-datasets/olive-tooling-sft-length-bias), 32k seq, bs8,
+# 3 epochs on 32 GPUs.  1020 steps total = 340 steps/epoch, but checkpoints land
+# every 125 steps, so no checkpoint sits exactly on an epoch boundary; these are
+# the first checkpoint at or past each one.  config.json is a genuine Qwen3-4B
+# (36L / 2560h / 151936 vocab) with max_position_embeddings 32768 and a
+# generation_config that caps max_new_tokens at 2048, so serving needs the same
+# --hf-overrides / --override-generation-config as the olive-32k rows.  Same
+# settings as those rows so the numbers stay comparable: T=0.001, ctx 40960,
+# 16384-token output cap (runlogs/lengthbias/).
+_LENGTHBIAS = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-lengthbias-32k-bs8-3ep-32gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((375, "1.10"), (750, "2.21"), (1020, "3.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-lengthbias-{_step}-out16k"] = (
+        _LENGTHBIAS % _step,
+        f"abdelrahman-qwen SFT olive-lengthbias (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+# abdelrahman-qwen 4B SFT on the olive regen-xml 8-source corpus, 32k, bs8,
+# 1 epoch, 24 GPUs.  Trained with chat_template_tooling_xml.jinja -- Qwen3.5's
+# template with reasoning preserved on every assistant turn -- so tool calls are
+# XML (<function=name><parameter=p>value</parameter></function>), not JSON.
+# Served through QwenXMLHandler, whose _format_prompt is a byte-exact port of
+# that template and whose decoder mirrors vLLM 0.12's qwen3xml tool parser
+# (runlogs/regenxml/).
+_REGENXML = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-regen-xml-8src-32k-bs8-1ep-24gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((125, "0.48"), (261, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-regenxml-{_step}-out16k"] = (
+        _REGENXML % _step,
+        f"abdelrahman-qwen SFT olive-regen-xml (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# abdelrahman-qwen 4B SFT on olive-tooling-sft-xml-8-source-term-corp, 32k, bs8,
+# 1 epoch, 24 GPUs (effective batch 192, 262 steps).  Same
+# chat_template_tooling_xml.jinja as the regen-xml run (md5 identical), so the
+# same QwenXMLHandler serves it; the two differ only in corpus, which makes them
+# a clean A/B on the data (runlogs/olivexml/).
+_OLIVEXML = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-xml-8src-32k-bs8-1ep-24gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((125, "0.48"), (262, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-olivexml-{_step}-out16k"] = (
+        _OLIVEXML % _step,
+        f"abdelrahman-qwen SFT olive-xml-8src (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# The shared PARENT of every tooling SFT run above: models/abdelrahman-qwen, a
+# 2-epoch "dual-mode-sft" of Qwen3-4B-Base (lr 1e-5, max_length 16384, Aug 05).
+# Evaluated here as a baseline to separate what the tooling SFT added from what
+# it destroyed -- it is coherent at prompt lengths where the XML children
+# degenerate.  Scored under both the JSON (-FC-keepreason) and XML (-XML)
+# variants off the same server, since the format lives in the handler
+# (runlogs/basemodel/).
+_CHECKPOINTS["abdelrahman-qwen-base-out16k"] = (
+    "/mnt/data01/muhsen/tooling/llm-pretrainer/models/abdelrahman-qwen",
+    "abdelrahman-qwen BASE dual-mode-sft parent (T=0.001 / out 16k / ctx 41k)",
+)
+
+
+# Two 1-epoch JSON-template runs (chat_template_tooling.jinja, md5 identical to
+# the olive-32k run, so -FC-keepreason / -FC-keepreason-lenient apply):
+#   json-full   : sft-datasets/olive-tooling-sft (the FULL 339,629-row corpus)
+#                 global batch 192, 24 GPUs, 448 steps
+#   remix-regen : sft-datasets/olive-tooling-sft-remix-reasoning-regen (299,996 rows)
+#                 global batch 132, 22 GPUs, 455 steps
+# Middle (step 250, ~epoch 0.56/0.55) and final checkpoints evaluated
+# (runlogs/jsonfull_remix/).
+_JSONFULL = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-json-full-32k-gb192-1ep-24gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((250, "0.56"), (448, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-jsonfull-{_step}-out16k"] = (
+        _JSONFULL % _step,
+        f"abdelrahman-qwen SFT olive-json-full (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+_REMIXREGEN = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-remix-regen-32k-gb132-1ep-22gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((250, "0.55"), (455, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-remixregen-{_step}-out16k"] = (
+        _REMIXREGEN % _step,
+        f"abdelrahman-qwen SFT olive-remix-regen (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# olive-xml-FULL: the XML template (chat_template_tooling_xml.jinja, md5
+# fbbd150cc817bff2582096482c5d9482 -- verified against the copy shipped in each
+# converted checkpoint) applied to the FULL olive corpus rather than the
+# 8-source cut, 32k, 1 epoch, 15 GPUs (bs 3x4), 482 steps.  No raw run dir or
+# training_config survives, so the template was identified from the converted
+# model's own chat_template.jinja.  Served with QwenXMLHandler (-XML).
+# Middle (step 250, ~epoch 0.52) and final (482) evaluated
+# (runlogs/xmlfull/).
+_XMLFULL = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-xml-full-32k-bs3x4-1ep-15gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((250, "0.52"), (482, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-xmlfull-{_step}-out16k"] = (
+        _XMLFULL % _step,
+        f"abdelrahman-qwen SFT olive-xml-full (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# remix-regen XML: the reasoning-regen remix corpus
+# (sft-datasets/olive-tooling-sft-remix-reasoning-regen-xml) rendered with the
+# XML template, 32k, 1 epoch, 23 GPUs (global batch 138), 442 steps.  This is
+# the cell that combines XML's better Live with regen's better Non-Live --
+# trained earlier but never converted until now.  Converted with cp from
+# checkpoints/.../checkpoint-{250,442}; weights byte-identical to source, the
+# four tokenizer files the trainer does not save taken from models/abdelrahman-qwen.
+# Middle (250 / epoch 0.57) and final (442 / epoch 1.00) (runlogs/remixregenxml/).
+_REMIXREGENXML = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-olive-remix-regen-xml-32k-gb138-1ep-23gpu/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((250, "0.57"), (442, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-remixregenxml-{_step}-out16k"] = (
+        _REMIXREGENXML % _step,
+        f"abdelrahman-qwen SFT olive-remix-regen-xml (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# REPRODUCIBILITY CHECK of the nemotron-737 row (Overall 33.94 / Non-Live 81.56 /
+# Live 75.35 / MultiTurn 19.50).  That 19.50% is the only 1-epoch multi-turn
+# result in the whole study and a load-bearing input to the scale-up decision,
+# and the degeneration boundary was shown to be stochastic under vLLM
+# data-parallel batching -- so it is worth re-running.  Same weights, same
+# handler, same settings as the original row; a separate registry key only so
+# the generations land in their own result/ dir instead of being skipped
+# (runlogs/nemotron_repro/).
+_CHECKPOINTS["abdelrahman-qwen-sft-nemotron32k-737-repro"] = (
+    "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-nemotron-32k-bs8/Qwen3-4B-Base-sft-final",
+    "abdelrahman-qwen SFT nemotron-32k epoch 1 (ckpt-737 REPRO / T=0.001 / out 16k / ctx 41k)",
+)
+
+
+# CURRICULUM run, trained on another machine and pulled from
+# s3://muhsen-avey-bucket/pi-machine-backup/models/abdelrahman-qwen-curriculum-nemotron-olive-remix-regen-json/
+# (40 objects, verified byte-for-byte against S3 on download).  Name says it
+# blends nemotron with the olive remix reasoning-regen corpus under a curriculum
+# -- i.e. the three levers the analysis pointed at: nemotron's shallow-
+# concentrated depth profile, regen's multi-call emission, and explicit
+# shallow->deep ordering.  JSON template (chat_template.jinja md5
+# 0fd9d91c2abadf39f998d6eb112a557a) so -FC-keepreason / -FC-keepreason-lenient
+# apply.  Unlike the other conversions this one already carries
+# max_position_embeddings 40960.  Middle (250) and final (469) evaluated
+# (runlogs/curriculum/).
+_CURRIC = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-curriculum-nemotron-olive-remix-regen-json/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((250, "0.53"), (469, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-curriculum-{_step}-out16k"] = (
+        _CURRIC % _step,
+        f"abdelrahman-qwen SFT curriculum nemotron+olive-remix-regen (ckpt-{_step} / epoch {_epoch} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
 _VARIANTS = [
     # registry suffix, handler,                   is_fc_model, display suffix
     ("-FC", QwenFCHandler, True, " (FC)"),
     ("-FC-nativefmt", QwenFCNativeToolsHandler, True, " (FC nativefmt)"),
     ("-FC-keepreason", QwenFCKeepReasonHandler, True, " (FC keepreason)"),
+    ("-FC-keepreason-lenient", QwenFCLenientHandler, True, " (FC keepreason lenient-json)"),
+    ("-XML", QwenXMLHandler, True, " (Qwen3.5 XML tool calls)"),
+    ("-XML-nothinkprefill", QwenXMLNoThinkPrefillHandler, True, " (XML, model emits <think> itself)"),
     ("", QwenHandler, False, " (Prompt)"),
 ]
 

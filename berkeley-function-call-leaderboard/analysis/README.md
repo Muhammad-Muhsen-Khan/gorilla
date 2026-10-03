@@ -116,8 +116,17 @@ prompt reached 56k tokens. The old keepreason runs at 32,768 logged about 89 per
 model. An overflowed entry is scored as a failure, so MT LongCtx for every
 keepreason row is partly a context-limit measurement.
 
-These three rows are not yet in `all_bfcl_results.tsv`. Their scores are in
-`score/data_overall.csv`, and run logs are in `../runlogs/nemotron32k/`.
+These three rows are now in `all_bfcl_results.tsv` (as `nemotron-32k` ckpt
+`*-t1ctx64k`), with run logs in `../runlogs/nemotron32k_t1_16k/`.
+
+Their display names contain commas -- `(ckpt-737, T=1.0, out 16k, ctx 64k)` --
+and `bfcl` writes `score/data_overall.csv` unquoted, so each of these rows
+carries 39 fields against the header's 36 and every column after `Model` is
+shifted by three. Read naively they look plausible but wrong (Live 81.50,
+MT 66.57 for ckpt-737, which are really Non-Live and Live values). The
+`read_rows` helper in `append_new_results.py` detects the field-count surplus
+and re-joins it into `Model`, which is the only free-text column. Keep that
+repair if the script is rewritten.
 
 ## Verifying the eval policy
 
