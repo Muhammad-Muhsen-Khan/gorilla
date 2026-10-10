@@ -737,6 +737,82 @@ for _step, _epoch in ((250, "0.53"), (469, "1.00")):
     )
 
 
+# CURRICULUM re-eval with the RoPE config repaired.
+#
+# transformers 5.2.0 writes RoPE as a nested block,
+#   "rope_parameters": {"rope_theta": 1000000, "rope_type": "default"}
+# and vLLM 0.8.5 -- the version BFCL pins -- never reads that key; the string
+# appears nowhere in the package. Every 5.2.0-converted checkpoint was therefore
+# served with its trained RoPE silently discarded, which produced coherent text
+# at short context and token noise past ~4k prompt tokens. That, not the data,
+# is why the first curriculum eval scored 0.00% multi-turn.
+#
+# models-sft/curriculum-oldcfg/ holds the same weights (hard-linked, verified
+# byte-identical) with config/generation_config/tokenizer copied byte-for-byte
+# from the 4.x-converted olive-32k ckpt-1074, which carries a flat rope_theta.
+# Proven on a 1-GPU sweep: these weights go from collapsing at 3,994 prompt
+# tokens to clean at 26,826, matching their nemotron-737 parent.
+# Separate registry keys so the invalid generations are not reused
+# (runlogs/curriculum/, ropefix run).
+_CURRIC_FIX = "/mnt/data01/muhsen/tooling/models-sft/curriculum-oldcfg/Qwen3-4B-Base-sft-%d"
+for _step, _epoch in ((250, "0.53"), (469, "1.00")):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-curriculum-{_step}-ropefix-out16k"] = (
+        _CURRIC_FIX % _step,
+        f"abdelrahman-qwen SFT curriculum nemotron+olive-remix-regen (ckpt-{_step} / epoch {_epoch} / ROPEFIX / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# Leave-one-out corpus probe (llm-pretrainer, requested by the training session).
+# One arm per held-out source, all from the SAME base (nemotron-32k sft-final),
+# one epoch, seed 1, global batch 56 on 7 GPUs -- so the arms are directly
+# comparable and the delta from `all9` is that source's contribution.
+# Converted with the flat rope_theta already on disk, so runlogs/ropefix_reeval/
+# serve.sh (max_position_embeddings override only) is the right serve shape.
+# JSON tool calls + reasoning on every assistant turn => -FC-keepreason, not -FC.
+# NOTE: only one all9 run (seed 1) exists, so there is no seed noise band.
+_PROBE = "/mnt/data01/muhsen/tooling/models-sft/probe-%s-seed1-32k-gb56-1ep-7gpu/Qwen3-4B-Base-sft-final"
+for _arm in ("all9", "no-toucan", "no-swe-zero-openhands", "no-nemotron-post-training",
+             "no-nemotron-agentic-tool", "no-openresearcher", "no-terminal-corpus",
+             "no-openseeker", "no-nemotron-agentic-interactive", "no-toolace"):
+    _CHECKPOINTS[f"probe-{_arm}-out16k"] = (
+        _PROBE % _arm,
+        f"probe LOO {_arm} (seed 1 / gb56 / 1ep / final / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# Curriculum nemotron -> olive-remix-regen WITHOUT toucan, JSON tool calls.
+# Same curriculum shape as abdelrahman-qwen-curriculum-nemotron-olive-remix-regen-json
+# but with the toucan source held out -- the LOO probe (2026-10-05) showed removing
+# toucan improved every column (Overall +2.16, Non-Live +6.67, Live +2.37, MT +2.75),
+# and toucan had the lowest train_loss of all ten arms (0.6286 vs 0.6871 baseline),
+# the signature of easy-to-fit, low-diversity data. Downloaded from
+# s3://muhsen-avey-bucket/pi-machine-backup/models/abdelrahman-qwen-curriculum-nemotron-olive-remix-notoucan-json/
+# Checkpoints 150 / 300 / 403; first (150) and last (403) evaluated (runlogs/notoucan/).
+_NOTOUCAN = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-curriculum-nemotron-olive-remix-notoucan-json/Qwen3-4B-Base-sft-%d"
+for _step in (150, 300, 403):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-notoucan-{_step}-out16k"] = (
+        _NOTOUCAN % _step,
+        f"abdelrahman-qwen SFT curriculum nemotron+olive-remix NO-TOUCAN (ckpt-{_step} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
+# Curriculum nemotron -> olive-remix, toucan held out, with PROPORTIONAL REPEAT of the
+# remaining sources (prop-repeat) so the held-out tokens are made up by upsampling the
+# rest rather than shrinking the corpus. JSON tool calls, chat_template_tooling.jinja.
+# Downloaded from s3://muhsen-avey-bucket/pi-machine-backup/fixed-models/
+#   abdelrahman-qwen-curriculum-nemotron-olive-remix-notoucan-prop-repeat-json/
+# Checkpoints 150 / 300 / 450 / 455; middle (300) and last (455) evaluated
+# (runlogs/notoucan_prop/).  Compare against the plain no-toucan run (403 steps,
+# Non-Live 81.73 / MT 25.12) to see whether upsampling recovers the multi-turn that
+# the plain hold-out lost versus curriculum-469 (MT 31.75).
+_NOTOUCAN_PROP = "/mnt/data01/muhsen/tooling/models-sft/abdelrahman-qwen-curriculum-nemotron-olive-remix-notoucan-prop-repeat-json/Qwen3-4B-Base-sft-%d"
+for _step in (150, 300, 450, 455):
+    _CHECKPOINTS[f"abdelrahman-qwen-sft-notoucanprop-{_step}-out16k"] = (
+        _NOTOUCAN_PROP % _step,
+        f"abdelrahman-qwen SFT curriculum nemotron+olive-remix NO-TOUCAN prop-repeat (ckpt-{_step} / T=0.001 / out 16k / ctx 41k)",
+    )
+
+
 _VARIANTS = [
     # registry suffix, handler,                   is_fc_model, display suffix
     ("-FC", QwenFCHandler, True, " (FC)"),
